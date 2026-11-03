@@ -60,6 +60,7 @@ aside{display:flex;flex-direction:column}
 .acct button{display:inline-block;width:auto;margin:0;padding:1px 7px;font-size:10px;text-align:center;background:#fff;border:1px solid var(--bd);border-radius:99px}
 .acct .lk{margin-top:4px}.dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}.dot.g{background:var(--ok)}.dot.o{background:#f5a623}
 .macct{display:none}
+.catchip{border:2px solid transparent;border-radius:99px;padding:5px 12px;color:#4a2f27;font-weight:600}.catchip.on{border-color:var(--tx)}
 .mhead{position:relative;display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:6px}.rf{position:absolute;right:2px;top:50%;transform:translateY(-50%);font-size:18px}.mt{font-size:24px;font-weight:800;min-width:150px;text-align:center}
 .wkrow{position:relative;height:38px;margin-bottom:4px;border-radius:12px;background:rgba(251,212,92,.22)}
 .wkrow .wk{position:relative;z-index:1;height:100%;align-items:center}
@@ -88,10 +89,11 @@ const TODAY=fmt(new Date()),DAYS=['일','월','화','수','목','금','토'],SRV
 const COLORS=['#FBD45C','#F7B9C8','#FFFBD0','#D5E6A8','#BFDDF5','#D9CCF2','#C6EBD9','#FFD6B8'];
 const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-let S={tasks:[],logs:[],sess:[],hl:{},timer:null,off:{},wr:'',push:false};
+let S={tasks:[],logs:[],sess:[],hl:{},timer:null,off:{},wr:'',push:false,todos:[],ex:[],cat:{},pay:{}};
 try{const r=localStorage.getItem('planner-v2')||localStorage.getItem('planner-v1');if(r)Object.assign(S,JSON.parse(r))}catch(e){}
 function save(){try{localStorage.setItem('planner-v2',JSON.stringify(S))}catch(e){}}
 let tab='cal',sel=TODAY,cm=TODAY.slice(0,7),mcp=null,cals=[],gev=[],gstat={s:'load',m:''},pick=COLORS[0],tick=null;
+let F={t:'',d1:'',d2:'',t1:'',t2:'',dest:'app',cat:'기타',pt:'시급',amt:'',todo:'',ex:{date:'',name:'',min:'',detail:'',note:'',push:false}};
 const gdate=e=>(e.start.dateTime||e.start.date||'').slice(0,10);
 const gtime=e=>e.start.dateTime?e.start.dateTime.slice(11,16):'종일';
 const hlOf=id=>S.hl[id]||'#E8E2CF';
@@ -101,6 +103,8 @@ const CLIENT_ID='1040361663037-5rh878kkqg25d5ogjclg6tgv8ee8qmpk.apps.googleuserc
 const SCOPE='https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly';
 const TZ=Intl.DateTimeFormat().resolvedOptions().timeZone;
 S.accts=S.accts||[];let tok={},tc=null;
+try{const r=JSON.parse(localStorage.getItem('planner-tok')||'{}');Object.keys(r).forEach(k=>{if(r[k].exp>Date.now())tok[k]=r[k]})}catch(e){}
+function saveTok(){try{localStorage.setItem('planner-tok',JSON.stringify(tok))}catch(e){}}
 const isW=c=>c.role==='owner'||c.role==='writer';
 function errMsg(e){
   if(e&&e.code==='expired')return'로그인이 만료됐어요. 해당 계정의 “다시 연결”을 눌러 주세요.';
@@ -109,7 +113,7 @@ function errMsg(e){
 function initG(){
   if(CLIENT_ID.startsWith('여기에')){gstat={s:'none',m:'index.html 위쪽의 CLIENT_ID에 클라이언트 ID를 붙여넣어 주세요.'};render();return}
   const t=setInterval(()=>{if(window.google&&google.accounts){clearInterval(t);
-    tc=google.accounts.oauth2.initTokenClient({client_id:CLIENT_ID,scope:SCOPE,callback:onTok});gstat={s:'idle',m:''};render()}},200);
+    tc=google.accounts.oauth2.initTokenClient({client_id:CLIENT_ID,scope:SCOPE,callback:onTok});gstat={s:'idle',m:''};render();if(S.accts.some(a=>tok[a]&&tok[a].exp>Date.now()))syncG()}},200);
 }
 function connect(email){if(tc)tc.requestAccessToken(email?{login_hint:email,prompt:''}:{prompt:'select_account'})}
 async function onTok(r){
@@ -118,16 +122,16 @@ async function onTok(r){
     const res=await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=100',{headers:{Authorization:'Bearer '+r.access_token}});
     const l=await res.json();const p=(l.items||[]).find(c=>c.primary);
     if(!p)throw{message:'계정 정보를 읽지 못했어요'};
-    tok[p.id]={t:r.access_token,exp:Date.now()+(r.expires_in-60)*1000};
+    tok[p.id]={t:r.access_token,exp:Date.now()+(r.expires_in-60)*1000};saveTok();
     if(!S.accts.includes(p.id)){S.accts.push(p.id);save()}
     syncG();
   }catch(e){gstat={s:'err',m:errMsg(e)};render()}
 }
-function rmAcct(a){S.accts=S.accts.filter(x=>x!==a);delete tok[a];save();syncG()}
+function rmAcct(a){S.accts=S.accts.filter(x=>x!==a);delete tok[a];saveTok();save();syncG()}
 async function api(acct,path,opt={}){
   const k=tok[acct];if(!k||k.exp<Date.now())throw{code:'expired',acct};
   const r=await fetch('https://www.googleapis.com/calendar/v3'+path,{method:opt.method||'GET',headers:{Authorization:'Bearer '+k.t,'Content-Type':'application/json'},body:opt.body?JSON.stringify(opt.body):undefined});
-  if(r.status===401){delete tok[acct];throw{code:'expired',acct}}
+  if(r.status===401){delete tok[acct];saveTok();throw{code:'expired',acct}}
   if(!r.ok)throw{message:(await r.text()).slice(0,160)};
   return r.status===204?null:r.json();
 }
@@ -157,20 +161,22 @@ function addMin(t,m){const[h,mi]=t.split(':').map(Number);const x=h*60+mi+m;retu
 async function insEv(k,title,date,st,en,endDate){
   const c=cals.find(x=>x.k===k);if(!c)throw{message:'쓸 수 있는 캘린더가 없어요'};
   const body={summary:title};
-  if(!st){body.start={date};body.end={date:add(date,1)}}
+  if(!st){body.start={date};body.end={date:add(endDate||date,1)}}
   else{body.start={dateTime:date+'T'+st+':00',timeZone:TZ};body.end={dateTime:(endDate||date)+'T'+(en||addMin(st,60))+':00',timeZone:TZ}}
   return api(c.acct,'/calendars/'+encodeURIComponent(c.id)+'/events',{method:'POST',body});
 }
 async function gCreate(){
-  const title=$('#nt').value.trim();if(!title)return;
-  const st=$('#t1').value,en=$('#t2').value,d=$('#dest').value;
-  if(d==='app'){S.tasks.push({id:uid(),date:sel,text:title,done:false,color:pick,time:st});save();render();return}
-  try{const p=await insEv(cals[+d].k,title,sel,st,en);if(p&&p.id){S.hl[p.id]=pick;save()}await syncG()}
+  const title=F.t.trim();if(!title)return;
+  const d1=F.d1||sel,d2=(F.d2&&F.d2>d1)?F.d2:d1,st=F.t1,en=F.t2;
+  const meta=id=>{S.cat[id]=F.cat;if(F.cat==='알바'&&+F.amt)S.pay[id]={type:F.pt,amt:+F.amt};save()};
+  const reset=()=>{F.t='';F.d1='';F.d2='';F.t1='';F.t2='';F.amt='';sel=d1;cm=d1.slice(0,7)};
+  if(F.dest==='app'){const id=uid();S.tasks.push({id,date:d1,end:d2,text:title,done:false,color:pick,time:st,t2:en});meta(id);reset();save();render();return}
+  try{const p=await insEv(cals[+F.dest].k,title,d1,st,en,d2);if(p&&p.id){S.hl[p.id]=pick;meta(p.id)}reset();await syncG()}
   catch(e){gstat={s:'err',m:errMsg(e)};render()}
 }
 async function gDel(i){
   const e=gev[i];if(!e||!confirm('구글 캘린더에서도 삭제돼요. 삭제할까요?'))return;
-  try{await api(e._acct,'/calendars/'+encodeURIComponent(e._cal)+'/events/'+e.id,{method:'DELETE'});delete S.hl[e.id];save();await syncG()}
+  try{await api(e._acct,'/calendars/'+encodeURIComponent(e._cal)+'/events/'+e.id,{method:'DELETE'});delete S.hl[e.id];delete S.cat[e.id];delete S.pay[e.id];save();await syncG()}
   catch(x){gstat={s:'err',m:errMsg(x)};render()}
 }
 async function gRename(i){
@@ -182,7 +188,7 @@ function setHl(id,c){S.hl[id]=c;save();render()}
 
 /* ---------- local tasks, logs ---------- */
 function toggle(id){const t=S.tasks.find(x=>x.id===id);t.done=!t.done;save();render()}
-function delT(id){S.tasks=S.tasks.filter(x=>x.id!==id);save();render()}
+function delT(id){S.tasks=S.tasks.filter(x=>x.id!==id);delete S.cat[id];delete S.pay[id];save();render()}
 function setTC(id,c){S.tasks.find(x=>x.id===id).color=c;save();render()}
 const sessMin=d=>Math.round(S.sess.filter(s=>s.date===d).reduce((a,s)=>a+s.sec,0)/60)+Math.round(S.logs.filter(l=>l.date===d).reduce((a,l)=>a+(+l.min||0),0));
 function addLog(){
@@ -229,37 +235,117 @@ function acctHTML(){
   const ok=a=>tok[a]&&tok[a].exp>Date.now();
   return '<div class="acct">'+S.accts.map(a=>`<div class="ar"><i class="dot ${ok(a)?'g':'o'}"></i><span title="${esc(a)}">${esc(a)}</span>${ok(a)?'':`<button onclick="connect('${esc(a)}')">다시 연결</button>`}<button onclick="rmAcct('${esc(a)}')" title="연결 해제">✕</button></div>`).join('')+`<button class="lk" onclick="connect()">＋ 계정 추가</button>${gstat.s==='load'?' <span style="opacity:.7">동기화 중…</span>':''}</div>`;
 }
+const CATS=['알바','가족행사','약속','기타'],CATC={'알바':'#BFDDF5','가족행사':'#F7B9C8','약속':'#D5E6A8','기타':'#FFFBD0'};
+const evInfo=e=>{const sd=gdate(e),ed=e.end?(e.end.date?add(e.end.date,-1):e.end.dateTime.slice(0,10)):sd;return{sd,ed:ed<sd?sd:ed,st:e.start.dateTime?e.start.dateTime.slice(11,16):'',en:e.end&&e.end.dateTime?e.end.dateTime.slice(11,16):''}};
+const evOn=(e,k)=>{const i=evInfo(e);return i.sd<=k&&k<=i.ed};
+const taskOn=(t,k)=>t.date<=k&&k<=(t.end||t.date);
+const mm=t=>+t.slice(0,2)*60+ +t.slice(3,5);
+function earn(cat,pay,sd,ed,st,en){
+  if(cat!=='알바'||!pay||!pay.amt)return null;
+  const days=Math.round((parse(ed)-parse(sd))/864e5)+1;
+  if(pay.type==='일급')return{total:pay.amt*days,note:''};
+  if(!st||!en)return{total:0,note:'시간 입력 필요'};
+  let m=mm(en)-mm(st),dd=days;if(m<=0){m+=1440;if(days===2)dd=1}
+  return{total:Math.round(pay.amt*m/60*dd),note:''};
+}
+const catTag=c=>c?`<span class="tag" style="background:${CATC[c]||'#eee'}">${c}</span>`:'';
+const payTag=r=>r?`<span class="tag">${r.total?'₩'+r.total.toLocaleString():''}${r.note?' '+r.note:''}</span>`:'';
+function setCat(id,v){S.cat[id]=v;save();render()}
+function setPay(id,k,v){const p=S.pay[id]||{type:'시급',amt:0};p[k]=k==='amt'?+v:v;S.pay[id]=p;save();render()}
+function setFCat(c){F.cat=c;pick=CATC[c];render()}
+function selDay(k){sel=k;F.d1='';render()}
+function ctl(id,cur,fn){
+  const cat=S.cat[id]||'기타',pay=S.pay[id]||{};
+  return `<div style="margin:-2px 0 10px 6px">${swHTML(cur,fn,`'${id}',`)}<div class="row" style="margin-top:6px;gap:6px"><select onchange="setCat('${id}',this.value)">${CATS.map(c=>`<option ${c===cat?'selected':''}>${c}</option>`).join('')}</select>${cat==='알바'?`<select onchange="setPay('${id}','type',this.value)"><option ${pay.type!=='일급'?'selected':''}>시급</option><option ${pay.type==='일급'?'selected':''}>일급</option></select><input type="number" style="width:110px" placeholder="금액(원)" value="${pay.amt||''}" onchange="setPay('${id}','amt',this.value)">`:''}</div></div>`;
+}
+/* todo */
+function addTodo(){const t=F.todo.trim();if(!t)return;S.todos.push({id:uid(),text:t,done:false});F.todo='';save();render();const i=$('#todoin');if(i)i.focus()}
+function togTodo(id){const t=S.todos.find(x=>x.id===id);t.done=!t.done;save();render()}
+function delTodo(id){S.todos=S.todos.filter(x=>x.id!==id);save();render()}
+function clrTodo(){S.todos=S.todos.filter(x=>!x.done);save();render()}
+function todoHTML(){
+  const open=S.todos.filter(t=>!t.done),done=S.todos.filter(t=>t.done);
+  return `<div class="card"><div class="row"><b>✅ 할 일</b><span class="mut sp">${done.length}/${S.todos.length} 완료</span>${done.length?'<button class="ghost" onclick="clrTodo()">완료 지우기</button>':''}</div>
+  <div class="row" style="margin:8px 0;flex-wrap:nowrap"><input type="text" id="todoin" placeholder="할 일을 적고 Enter" value="${esc(F.todo)}" oninput="F.todo=this.value" onkeydown="if(event.key==='Enter')addTodo()"><button class="pri" onclick="addTodo()">＋</button></div>
+  ${[...open,...done].map(t=>`<div class="item ${t.done?'done':''}" style="background:var(--bg);color:var(--tx)"><input type="checkbox" ${t.done?'checked':''} onchange="togTodo('${t.id}')"><span class="t sp">${esc(t.text)}</span><button class="ghost" onclick="delTodo('${t.id}')">✕</button></div>`).join('')||'<div class="mut">할 일이 없어요 🎉</div>'}</div>`;
+}
+function monthSum(){
+  let inc=0,cnt=0;
+  gev.forEach(e=>{if(S.cat[e.id]==='알바'&&gdate(e).slice(0,7)===cm){cnt++;const i=evInfo(e),r=earn('알바',S.pay[e.id],i.sd,i.ed,i.st,i.en);if(r)inc+=r.total}});
+  S.tasks.forEach(t=>{if(S.cat[t.id]==='알바'&&t.date.slice(0,7)===cm){cnt++;const r=earn('알바',S.pay[t.id],t.date,t.end||t.date,t.time,t.t2);if(r)inc+=r.total}});
+  const exd=new Set(S.ex.filter(x=>x.date.slice(0,7)===cm).map(x=>x.date)).size;
+  const p=[];if(cnt)p.push(`💼 알바 ${cnt}건 · 예상 수입 ₩${inc.toLocaleString()}`);if(exd)p.push(`💪 운동 ${exd}일`);
+  return p.length?`<div class="mut" style="margin-top:10px;text-align:center">${p.join(' &nbsp;·&nbsp; ')}</div>`:'';
+}
 function calView(){
   const[y,m]=cm.split('-').map(Number),first=new Date(y,m-1,1).getDay(),n=new Date(y,m,0).getDate();
   const wcals=cals.filter(isW);
-  let h=(gstat.s==='err'||gstat.s==='none')?`<div class="bad" style="margin-bottom:8px;font-size:13px">${esc(gstat.m)}</div>`:'';
+  let h=todoHTML();
+  h+=(gstat.s==='err'||gstat.s==='none')?`<div class="bad" style="margin-bottom:8px;font-size:13px">${esc(gstat.m)}</div>`:'';
   h+=`<div class="card"><div class="mhead"><button class="ghost" onclick="mv(-1)">◀</button><b class="mt">${y}년 ${m}월</b><button class="ghost" onclick="mv(1)">▶</button><button class="ghost rf" onclick="syncG()" title="새로고침">↻</button></div>`;
   h+=`<div class="wkrow"><i class="d d1"></i><i class="d d2"></i><i class="d d3"></i><i class="d d4"></i><div class="cal wk">${DAYS.map((d,i)=>`<b class="${i==0?'su':i==6?'sa':''}" style="text-align:center">${d}</b>`).join('')}</div></div><div class="cal">`;
   for(let i=0;i<first;i++)h+='<span></span>';
   for(let d=1;d<=n;d++){
     const k=cm+'-'+pad(d);
-    const evs=[...gev.filter(e=>gdate(e)===k).map(e=>({t:e.summary,c:hlOf(e.id)})),...S.tasks.filter(t=>t.date===k).map(t=>({t:t.text,c:t.color||COLORS[0]}))];
-    const sm=sessMin(k);
-    h+=`<button class="cell ${k===sel?'sel':''} ${k===TODAY?'today':''}" onclick="sel='${k}';render()"><span class="dn">${d}</span>${evs.slice(0,3).map(e=>`<span class="chip" style="background:${e.c}">${esc(e.t||'(제목 없음)')}</span>`).join('')}${evs.length>3?`<span class="mut" style="font-size:10px">+${evs.length-3}</span>`:''}${sm?`<span class="chip" style="background:#D5E6A8">📚 ${Math.floor(sm/60)?Math.floor(sm/60)+'h ':''}${sm%60}m</span>`:''}</button>`;
+    const evs=[...gev.filter(e=>evOn(e,k)).map(e=>({t:e.summary,c:hlOf(e.id)})),...S.tasks.filter(t=>taskOn(t,k)).map(t=>({t:t.text,c:t.color||COLORS[0]}))];
+    const sm=sessMin(k),exs=S.ex.filter(x=>x.date===k),exm=exs.reduce((a,x)=>a+x.min,0);
+    h+=`<button class="cell ${k===sel?'sel':''} ${k===TODAY?'today':''}" onclick="selDay('${k}')"><span class="dn">${d}</span>${evs.slice(0,3).map(e=>`<span class="chip" style="background:${e.c}">${esc(e.t||'(제목 없음)')}</span>`).join('')}${evs.length>3?`<span class="mut" style="font-size:10px">+${evs.length-3}</span>`:''}${sm?`<span class="chip" style="background:#D5E6A8">📚 ${Math.floor(sm/60)?Math.floor(sm/60)+'h ':''}${sm%60}m</span>`:''}${exs.length?`<span class="chip" style="background:#FFD6B8">💪 ${exm?exm+'m':exs.length+'회'}</span>`:''}</button>`;
   }
-  h+='</div><div class="ban"></div></div>';
-  const dg=gev.filter(e=>gdate(e)===sel).sort((a,b)=>gtime(a).localeCompare(gtime(b)));
-  const dt=S.tasks.filter(t=>t.date===sel);
+  h+='</div>'+monthSum()+'<div class="ban"></div></div>';
+  const dg=gev.filter(e=>evOn(e,sel)).sort((a,b)=>gtime(a).localeCompare(gtime(b)));
+  const dt=S.tasks.filter(t=>taskOn(t,sel));
+  const dx=S.ex.filter(x=>x.date===sel);
   const d=parse(sel);
   h+=`<div class="card"><b>${d.getMonth()+1}월 ${d.getDate()}일 (${DAYS[d.getDay()]})</b> <span class="mut">공부 ${sessMin(sel)}분</span><div style="margin-top:8px">`;
-  h+=dg.map(e=>`<div class="item" style="background:${hlOf(e.id)}"><span class="t sp"><b>${gtime(e)}</b> ${esc(e.summary||'(제목 없음)')} <span class="tag">${esc(e._calName.split('@')[0])}</span></span><button class="ghost" onclick="gRename(${e._i})">✎</button><button class="ghost" onclick="gDel(${e._i})">✕</button></div><div style="margin:-2px 0 8px 6px">${swHTML(S.hl[e.id],'setHl',`'${e.id}',`)}</div>`).join('');
-  h+=dt.map(t=>`<div class="item ${t.done?'done':''}" style="background:${t.color||COLORS[0]}"><input type="checkbox" ${t.done?'checked':''} onchange="toggle('${t.id}')"><span class="t sp">${t.time?`<b>${t.time}</b> `:''}${esc(t.text)} <span class="tag">앱</span></span><button class="ghost" onclick="delT('${t.id}')">✕</button></div>`).join('');
-  if(!dg.length&&!dt.length)h+='<div class="mut">이 날은 일정이 없어요.</div>';
+  h+=dg.map(e=>{const i=evInfo(e),r=earn(S.cat[e.id],S.pay[e.id],i.sd,i.ed,i.st,i.en);
+    return `<div class="item" style="background:${hlOf(e.id)}"><span class="t sp"><b>${gtime(e)}</b> ${esc(e.summary||'(제목 없음)')}${i.sd!==i.ed?` <span class="mut">(${i.sd.slice(5)}~${i.ed.slice(5)})</span>`:''} ${catTag(S.cat[e.id])}${payTag(r)} <span class="tag">${esc(e._calName.split('@')[0])}</span></span><button class="ghost" onclick="gRename(${e._i})">✎</button><button class="ghost" onclick="gDel(${e._i})">✕</button></div>${ctl(e.id,S.hl[e.id],'setHl')}`}).join('');
+  h+=dt.map(t=>{const r=earn(S.cat[t.id],S.pay[t.id],t.date,t.end||t.date,t.time,t.t2);
+    return `<div class="item ${t.done?'done':''}" style="background:${t.color||COLORS[0]}"><input type="checkbox" ${t.done?'checked':''} onchange="toggle('${t.id}')"><span class="t sp">${t.time?`<b>${t.time}</b> `:''}${esc(t.text)}${t.end&&t.end!==t.date?` <span class="mut">(${t.date.slice(5)}~${t.end.slice(5)})</span>`:''} ${catTag(S.cat[t.id])}${payTag(r)} <span class="tag">앱</span></span><button class="ghost" onclick="delT('${t.id}')">✕</button></div>${ctl(t.id,t.color,'setTC')}`}).join('');
+  h+=dx.map(x=>`<div class="item" style="background:#FFD6B8"><span class="t sp">💪 <b>${esc(x.name)}</b> ${x.min?x.min+'분':''} ${esc(x.detail)}</span></div>`).join('');
+  if(!dg.length&&!dt.length&&!dx.length)h+='<div class="mut">이 날은 일정이 없어요.</div>';
   h+='</div></div>';
-  h+=`<div class="card"><b>일정 추가</b><input type="text" id="nt" placeholder="일정 / 할 일" style="margin:8px 0" onkeydown="if(event.key==='Enter')gCreate()">
-  <div class="row"><input type="time" id="t1"><span>~</span><input type="time" id="t2">
-  <select id="dest" class="sp"><option value="app">앱에만 저장</option>${wcals.map(c=>`<option value="${cals.indexOf(c)}">구글: ${esc(c.summary)}</option>`).join('')}</select></div>
+  h+=`<div class="card"><b>일정 추가</b><input type="text" placeholder="일정 제목" value="${esc(F.t)}" style="margin:8px 0" oninput="F.t=this.value" onkeydown="if(event.key==='Enter')gCreate()">
+  <div class="row"><span class="mut">날짜</span><input type="date" value="${F.d1||sel}" oninput="F.d1=this.value"><span>~</span><input type="date" value="${F.d2}" oninput="F.d2=this.value"></div>
+  <div class="mut" style="margin:2px 0 6px">연속 일정이면 종료일을 고르세요. 비워 두면 하루예요.</div>
+  <div class="row"><span class="mut">시간</span><input type="time" value="${F.t1}" oninput="F.t1=this.value"><span>~</span><input type="time" value="${F.t2}" oninput="F.t2=this.value"></div>
+  <div class="row" style="margin-top:10px">${CATS.map(c=>`<button class="catchip ${F.cat===c?'on':''}" style="background:${CATC[c]}" onclick="setFCat('${c}')">${F.cat===c?'✓ ':''}${c}</button>`).join('')}</div>
+  ${F.cat==='알바'?`<div class="row" style="margin-top:8px"><select onchange="F.pt=this.value;render()"><option ${F.pt==='시급'?'selected':''}>시급</option><option ${F.pt==='일급'?'selected':''}>일급</option></select><input type="number" placeholder="${F.pt} (원)" value="${esc(F.amt)}" oninput="F.amt=this.value" style="flex:1;width:auto;min-width:110px"></div>${F.pt==='시급'?'<div class="mut" style="margin-top:4px">시급은 시간을 넣으면 예상 수입이 계산돼요.</div>':''}`:''}
+  <select class="sp" style="margin-top:10px;width:100%" onchange="F.dest=this.value"><option value="app" ${F.dest==='app'?'selected':''}>앱에만 저장</option>${wcals.map(c=>`<option value="${cals.indexOf(c)}" ${String(cals.indexOf(c))===F.dest?'selected':''}>구글: ${esc(c.summary)}</option>`).join('')}</select>
   <div style="margin:10px 0 4px" class="mut">하이라이트 색</div>${swHTML(pick,'setPick')}
   <button class="pri" style="margin-top:10px" onclick="gCreate()">추가</button></div>`;
   if(cals.length)h+=`<div class="card"><b>불러올 캘린더</b><div class="mut" style="margin:4px 0 6px">계정을 여러 개 추가하면 모두 여기에 모여요.</div>${cals.map(c=>`<label class="row"><input type="checkbox" ${S.off[c.k]?'':'checked'} onchange="togCal('${esc(c.k)}')"> ${esc(c.summary)}</label>`).join('')}</div>`;
   return h;
 }
-function setPick(c){pick=c;const t=$('#nt')?$('#nt').value:'';render();if($('#nt'))$('#nt').value=t}
+function setPick(c){pick=c;render()}
+/* exercise */
+const EXN=['러닝','걷기','웨이트','요가','필라테스','수영','자전거','스트레칭','홈트'];
+async function addEx(){
+  const e=F.ex,name=e.name.trim();if(!name)return;
+  const date=e.date||sel||TODAY,min=+e.min||0;
+  S.ex.push({id:uid(),date,name,min,detail:e.detail.trim(),note:e.note.trim()});save();
+  const wk=S.wr||(cals.find(isW)||{}).k,push=e.push;
+  F.ex={date:'',name:'',min:'',detail:'',note:'',push:push};render();
+  if(push&&wk){try{await insEv(wk,'💪 '+name+(min?' ('+min+'분)':''),date,'','');syncG()}catch(x){gstat={s:'err',m:errMsg(x)};render()}}
+}
+function delEx(id){S.ex=S.ex.filter(x=>x.id!==id);save();render()}
+function exView(){
+  const e=F.ex,d=e.date||sel||TODAY,names=[...new Set([...EXN,...S.ex.map(x=>x.name)])];
+  const wk=Array.from({length:7},(_,i)=>add(TODAY,i-6)),mo=TODAY.slice(0,7);
+  const mx=S.ex.filter(x=>x.date.slice(0,7)===mo),days=new Set(mx.map(x=>x.date)).size,tm=mx.reduce((a,x)=>a+x.min,0);
+  let h=`<div class="card"><b>운동 체크</b>
+  <input type="date" value="${d}" oninput="F.ex.date=this.value" style="margin:8px 0">
+  <input type="text" list="exl" placeholder="종목 (예: 러닝)" value="${esc(e.name)}" oninput="F.ex.name=this.value"><datalist id="exl">${names.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
+  <div class="row" style="margin-top:8px;flex-wrap:nowrap"><input type="number" placeholder="시간(분)" value="${esc(e.min)}" oninput="F.ex.min=this.value" style="width:110px"><input type="text" placeholder="세트·횟수·무게·거리" value="${esc(e.detail)}" oninput="F.ex.detail=this.value"></div>
+  <textarea placeholder="메모" oninput="F.ex.note=this.value" style="margin-top:8px">${esc(e.note)}</textarea>
+  <label class="row" style="margin-top:6px"><input type="checkbox" ${e.push?'checked':''} onchange="F.ex.push=this.checked"> 구글 캘린더에도 올리기</label>
+  <button class="pri" style="margin-top:8px" onclick="addEx()">운동 체크 ✓</button>
+  <div class="mut" style="margin-top:6px">저장하면 일정 달력의 해당 날짜에 💪가 표시돼요.</div></div>
+  <div class="card"><div class="row"><div class="sp"><div class="mut">이번 달 운동한 날</div><b style="font-size:22px">${days}일</b></div><div class="sp"><div class="mut">이번 달 운동 시간</div><b style="font-size:22px">${tm}분</b></div></div>
+  <div class="row" style="margin-top:10px;justify-content:space-between">${wk.map(k=>`<div style="text-align:center;font-size:11px" class="mut">${DAYS[parse(k).getDay()]}<div style="font-size:20px">${S.ex.some(x=>x.date===k)?'💪':'·'}</div></div>`).join('')}</div></div>`;
+  const dates=[...new Set(S.ex.map(x=>x.date))].sort().reverse();
+  h+=dates.length?dates.map(k=>`<div class="card"><b>${k}</b>`+S.ex.filter(x=>x.date===k).map(x=>`<div class="item" style="background:var(--bg);color:var(--tx);align-items:flex-start"><div class="sp"><b>${esc(x.name)}</b> <span class="mut">${x.min?x.min+'분':''} ${esc(x.detail)}</span>${x.note?`<div style="white-space:pre-wrap">${esc(x.note)}</div>`:''}</div><button class="ghost" onclick="delEx('${x.id}')">✕</button></div>`).join('')+'</div>').join(''):'<div class="mut">아직 운동 기록이 없어요.</div>';
+  return h;
+}
 function togCal(id){S.off[id]=!S.off[id];save();syncG()}
 function mv(n){const[y,m]=cm.split('-').map(Number);const d=new Date(y,m-1+n,1);cm=d.getFullYear()+'-'+pad(d.getMonth()+1);sel=cm+'-01';syncG()}
 
@@ -298,11 +384,11 @@ function exp(){const a=document.createElement('a');a.href=URL.createObjectURL(ne
 function imp(el){const f=el.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{Object.assign(S,JSON.parse(r.result));save();render()}catch(e){alert('파일을 읽을 수 없어요')}};r.readAsText(f)}
 
 function render(){
-  const T={cal:['📅 일정','일정'],log:['📝 공부 기록','공부 기록'],time:['⏱ 스터디 타임체크','타임체크']};
+  const T={cal:['📅 일정','일정'],log:['📝 공부 기록','공부 기록'],time:['⏱ 스터디 타임체크','타임체크'],ex:['💪 운동 기록','운동 기록']};
   $('#ttl').textContent=T[tab][0];
   $('#side').innerHTML='<h2>🐰 내 플래너</h2>'+Object.keys(T).map(k=>`<button class="${tab===k?'on':''}" onclick="tab='${k}';render()">${T[k][1]}</button>`).join('')+'<div class="face"></div>'+acctHTML();
   $('#macct').innerHTML=acctHTML();
-  $('#app').innerHTML={cal:calView,log:logView,time:timeView}[tab]();
+  $('#app').innerHTML={cal:calView,log:logView,time:timeView,ex:exView}[tab]();
   clearInterval(tick);
   if(S.timer&&tab==='time')tick=setInterval(()=>{const c=$('#clock');if(c)c.textContent=hms(elapsed());const t=$('#tot');if(t)t.textContent=hms(S.sess.filter(s=>s.date===TODAY).reduce((a,s)=>a+s.sec,0)+elapsed())},1000);
 }
