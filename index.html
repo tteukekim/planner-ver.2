@@ -93,16 +93,16 @@ let S={tasks:[],logs:[],sess:[],hl:{},timer:null,off:{},wr:'',push:false,todos:[
 try{const r=localStorage.getItem('planner-v2')||localStorage.getItem('planner-v1');if(r)Object.assign(S,JSON.parse(r))}catch(e){}
 function save(){try{localStorage.setItem('planner-v2',JSON.stringify(S))}catch(e){}}
 let tab='cal',sel=TODAY,cm=TODAY.slice(0,7),mcp=null,cals=[],gev=[],gstat={s:'load',m:''},pick=COLORS[0],tick=null;
-let F={t:'',d1:'',d2:'',t1:'',t2:'',dest:'app',cat:'기타',pt:'시급',amt:'',todo:'',ex:{date:'',name:'',min:'',detail:'',note:'',push:false}};
+let F={t:'',d1:'',d2:'',t1:'',t2:'',dest:'app',cat:'기타',pt:'시급',amt:'',todo:'',todoDest:'',todoDue:'',q:'',ex:{date:'',name:'',min:'',detail:'',note:'',push:false}};
 const gdate=e=>(e.start.dateTime||e.start.date||'').slice(0,10);
 const gtime=e=>e.start.dateTime?e.start.dateTime.slice(11,16):'종일';
 const hlOf=id=>S.hl[id]||'#E8E2CF';
 
 /* ---------- Google Calendar (직접 연동) ---------- */
 const CLIENT_ID='1040361663037-5rh878kkqg25d5ogjclg6tgv8ee8qmpk.apps.googleusercontent.com'; // 예: 1234-abcd.apps.googleusercontent.com
-const SCOPE='https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly';
+const SCOPE='https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/tasks';
 const TZ=Intl.DateTimeFormat().resolvedOptions().timeZone;
-S.accts=S.accts||[];let tok={},tc=null;
+S.accts=S.accts||[];let tok={},tc=null,gtasks=[],tstat={};
 try{const r=JSON.parse(localStorage.getItem('planner-tok')||'{}');Object.keys(r).forEach(k=>{if(r[k].exp>Date.now())tok[k]=r[k]})}catch(e){}
 function saveTok(){try{localStorage.setItem('planner-tok',JSON.stringify(tok))}catch(e){}}
 const isW=c=>c.role==='owner'||c.role==='writer';
@@ -155,7 +155,7 @@ async function syncG(){
   }
   cals=nc;gev=ne;gev.forEach((e,i)=>e._i=i);
   gstat=bad?{s:'err',m:errMsg(bad)}:{s:'ok',m:'',t:new Date()};
-  render();
+  render();syncT();
 }
 function addMin(t,m){const[h,mi]=t.split(':').map(Number);const x=h*60+mi+m;return pad(Math.floor(x/60)%24)+':'+pad(x%60)}
 async function insEv(k,title,date,st,en,endDate){
@@ -258,16 +258,78 @@ function ctl(id,cur,fn){
   const cat=S.cat[id]||'기타',pay=S.pay[id]||{};
   return `<div style="margin:-2px 0 10px 6px">${swHTML(cur,fn,`'${id}',`)}<div class="row" style="margin-top:6px;gap:6px"><select onchange="setCat('${id}',this.value)">${CATS.map(c=>`<option ${c===cat?'selected':''}>${c}</option>`).join('')}</select>${cat==='알바'?`<select onchange="setPay('${id}','type',this.value)"><option ${pay.type!=='일급'?'selected':''}>시급</option><option ${pay.type==='일급'?'selected':''}>일급</option></select><input type="number" style="width:110px" placeholder="금액(원)" value="${pay.amt||''}" onchange="setPay('${id}','amt',this.value)">`:''}</div></div>`;
 }
-/* todo */
-function addTodo(){const t=F.todo.trim();if(!t)return;S.todos.push({id:uid(),text:t,done:false});F.todo='';save();render();const i=$('#todoin');if(i)i.focus()}
+/* todo + Google Tasks */
+async function tapi(acct,path,opt={}){
+  const k=tok[acct];if(!k||k.exp<Date.now())throw{code:'expired',acct};
+  const r=await fetch('https://tasks.googleapis.com/tasks/v1'+path,{method:opt.method||'GET',headers:{Authorization:'Bearer '+k.t,'Content-Type':'application/json'},body:opt.body?JSON.stringify(opt.body):undefined});
+  if(r.status===401){delete tok[acct];saveTok();throw{code:'expired',acct}}
+  if(r.status===403)throw{code:'scope'};
+  if(!r.ok)throw{message:(await r.text()).slice(0,160)};
+  return r.status===204?null:r.json();
+}
+const errT=e=>e.code==='expired'?'로그인이 만료됐어요. 사이드바에서 “다시 연결”을 눌러 주세요.':e.code==='scope'?'Google Tasks 권한이 없어요. 콘솔에서 Tasks API를 켠 뒤 “권한 받기”를 눌러 주세요.':(e.message||'오류');
+async function syncT(){
+  if(!tc)return;
+  const out=[],st={};
+  for(const ac of S.accts){
+    if(!tok[ac]||tok[ac].exp<Date.now())continue;
+    try{const p=await tapi(ac,'/lists/@default/tasks?showCompleted=true&showHidden=false&maxResults=100');(p.items||[]).forEach(t=>out.push({...t,_acct:ac}))}
+    catch(e){st[ac]=errT(e)}
+  }
+  const op=out.filter(t=>t.status!=='completed'),cp=out.filter(t=>t.status==='completed').sort((a,b)=>(b.updated||'').localeCompare(a.updated||'')).slice(0,15);
+  gtasks=[...op,...cp];tstat=st;render();
+}
+const todoDest=()=>(F.todoDest&&S.accts.includes(F.todoDest))?F.todoDest:(S.accts[0]||'');
+async function addTodo(){
+  const t=F.todo.trim(),dest=todoDest(),due=F.todoDue;if(!t||!dest)return;
+  try{
+    const body={title:t};if(due)body.due=due+'T00:00:00.000Z';
+    const r=await tapi(dest,'/lists/@default/tasks',{method:'POST',body});
+    gtasks.unshift({...r,_acct:dest});F.todo='';F.todoDue='';delete tstat[dest];render();const i=$('#todoin');if(i)i.focus();
+  }catch(e){tstat[dest]=errT(e);render()}
+}
+async function moveTodos(){
+  const dest=todoDest();if(!dest)return;
+  for(const t of [...S.todos]){
+    try{
+      const body={title:t.text,status:t.done?'completed':'needsAction'};if(t.due)body.due=t.due+'T00:00:00.000Z';
+      const r=await tapi(dest,'/lists/@default/tasks',{method:'POST',body});
+      gtasks.unshift({...r,_acct:dest});S.todos=S.todos.filter(x=>x.id!==t.id);save();
+    }catch(e){tstat[dest]=errT(e);break}
+  }
+  render();
+}
 function togTodo(id){const t=S.todos.find(x=>x.id===id);t.done=!t.done;save();render()}
 function delTodo(id){S.todos=S.todos.filter(x=>x.id!==id);save();render()}
-function clrTodo(){S.todos=S.todos.filter(x=>!x.done);save();render()}
+async function togGT(i){
+  const t=gtasks[i];if(!t)return;const done=t.status!=='completed';
+  try{const r=await tapi(t._acct,'/lists/@default/tasks/'+t.id,{method:'PATCH',body:done?{status:'completed'}:{status:'needsAction',completed:null}});Object.assign(t,r);render()}
+  catch(e){tstat[t._acct]=errT(e);render()}
+}
+async function delGT(i){
+  const t=gtasks[i];if(!t)return;
+  try{await tapi(t._acct,'/lists/@default/tasks/'+t.id,{method:'DELETE'});gtasks.splice(i,1);render()}
+  catch(e){tstat[t._acct]=errT(e);render()}
+}
+async function clrTodo(){
+  S.todos=S.todos.filter(x=>!x.done);save();
+  const accs=[...new Set(gtasks.filter(t=>t.status==='completed').map(t=>t._acct))];
+  for(const a of accs){try{await tapi(a,'/lists/@default/clear',{method:'POST'})}catch(e){tstat[a]=errT(e)}}
+  gtasks=gtasks.filter(t=>t.status!=='completed');render();
+}
 function todoHTML(){
-  const open=S.todos.filter(t=>!t.done),done=S.todos.filter(t=>t.done);
-  return `<div class="card"><div class="row"><b>✅ 할 일</b><span class="mut sp">${done.length}/${S.todos.length} 완료</span>${done.length?'<button class="ghost" onclick="clrTodo()">완료 지우기</button>':''}</div>
-  <div class="row" style="margin:8px 0;flex-wrap:nowrap"><input type="text" id="todoin" placeholder="할 일을 적고 Enter" value="${esc(F.todo)}" oninput="F.todo=this.value" onkeydown="if(event.key==='Enter')addTodo()"><button class="pri" onclick="addTodo()">＋</button></div>
-  ${[...open,...done].map(t=>`<div class="item ${t.done?'done':''}" style="background:var(--bg);color:var(--tx)"><input type="checkbox" ${t.done?'checked':''} onchange="togTodo('${t.id}')"><span class="t sp">${esc(t.text)}</span><button class="ghost" onclick="delTodo('${t.id}')">✕</button></div>`).join('')||'<div class="mut">할 일이 없어요 🎉</div>'}</div>`;
+  const loc=S.todos.map(t=>({go:`togTodo('${t.id}')`,rm:`delTodo('${t.id}')`,text:t.text,done:t.done,due:t.due||'',tag:'이 기기'}));
+  const gt=gtasks.map((t,i)=>({go:`togGT(${i})`,rm:`delGT(${i})`,text:t.title||'(제목 없음)',done:t.status==='completed',due:t.due?t.due.slice(0,10):'',tag:'Tasks · '+t._acct.split('@')[0]}));
+  const all=[...loc,...gt],open=all.filter(x=>!x.done).sort((a,b)=>(a.due||'9').localeCompare(b.due||'9')),done=all.filter(x=>x.done);
+  const dest=todoDest();
+  const errs=Object.keys(tstat).map(a=>`<div class="bad" style="font-size:12px;margin:4px 0">${esc(a)}: ${esc(tstat[a])} <button class="ghost" onclick="connect('${esc(a)}')">권한 받기</button></div>`).join('');
+  const form=dest?`<div class="row" style="margin:8px 0;flex-wrap:nowrap"><input type="text" id="todoin" placeholder="할 일을 적고 Enter" value="${esc(F.todo)}" oninput="F.todo=this.value" onkeydown="if(event.key==='Enter')addTodo()"><button class="pri" onclick="addTodo()">＋</button></div>
+  <div class="row" style="margin-bottom:8px;gap:6px"><select onchange="F.todoDest=this.value" style="flex:1;min-width:0">${S.accts.map(a=>`<option value="${esc(a)}" ${dest===a?'selected':''}>Google Tasks · ${esc(a)}</option>`).join('')}</select><input type="date" value="${esc(F.todoDue)}" oninput="F.todoDue=this.value" title="마감일(선택)"></div>`
+  :'<div class="mut" style="margin:8px 0">할 일은 Google Tasks에 저장돼요. 왼쪽 아래의 “＋ 계정 추가”로 구글 계정을 연결해 주세요.</div>';
+  const mig=S.todos.length?`<div class="mut" style="margin:6px 0">이 기기에만 저장된 할 일 ${S.todos.length}개 ${dest?'<button class="pri" style="padding:2px 10px" onclick="moveTodos()">Google Tasks로 옮기기</button>':''}</div>`:'';
+  return `<div class="card"><div class="row"><b>✅ 할 일</b><span class="mut sp">${done.length}/${all.length} 완료</span>${done.length?'<button class="ghost" onclick="clrTodo()">완료 지우기</button>':''}</div>
+  ${form}${errs}${mig}
+  ${[...open,...done].map(x=>`<div class="item ${x.done?'done':''}" style="background:var(--bg);color:var(--tx)"><input type="checkbox" ${x.done?'checked':''} onchange="${x.go}"><span class="t sp">${esc(x.text)}${x.due?` <span class="tag" style="background:var(--bd)">마감 ${x.due.slice(5)}</span>`:''} <span class="tag" style="background:var(--bd)">${esc(x.tag)}</span></span><button class="ghost" onclick="${x.rm}">✕</button></div>`).join('')||'<div class="mut">할 일이 없어요 🎉</div>'}</div>`;
 }
 function monthSum(){
   let inc=0,cnt=0;
@@ -349,18 +411,26 @@ function exView(){
 function togCal(id){S.off[id]=!S.off[id];save();syncG()}
 function mv(n){const[y,m]=cm.split('-').map(Number);const d=new Date(y,m-1+n,1);cm=d.getFullYear()+'-'+pad(d.getMonth()+1);sel=cm+'-01';syncG()}
 
+function logList(){
+  const q=(F.q||'').trim().toLowerCase();
+  const rows=S.logs.filter(l=>!q||(l.subject+' '+l.note).toLowerCase().includes(q));
+  const dates=[...new Set(rows.map(l=>l.date))].sort().reverse();
+  return dates.length?dates.map(d=>{const dd=parse(d);return `<div class="card" style="border-left:7px solid var(--ac2)"><b>${d} (${DAYS[dd.getDay()]})</b>`+rows.filter(l=>l.date===d).map(l=>`<div class="item" style="background:var(--bg);color:var(--tx);align-items:flex-start;margin-top:8px"><div class="sp"><b>${esc(l.subject)}</b>${l.min?` <span class="mut">${l.min}분</span>`:''}<div style="white-space:pre-wrap;margin-top:2px">${esc(l.note)}</div></div><button class="ghost" onclick="delLog('${l.id}')">✕</button></div>`).join('')+'</div>'}).join(''):`<div class="mut">${q?'검색 결과가 없어요.':'아직 쓴 알림장이 없어요.'}</div>`;
+}
+function exportLog(){
+  const t=[...S.logs].sort((a,b)=>a.date.localeCompare(b.date)).map(l=>`[${l.date} (${DAYS[parse(l.date).getDay()]})] ${l.subject}${l.min?' · '+l.min+'분':''}\n${l.note}\n`).join('\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([t],{type:'text/plain'}));a.download='알림장.txt';a.click();
+}
 function logView(){
   const subs=[...new Set(S.logs.map(l=>l.subject).concat(S.sess.map(s=>s.subject)))];
-  let h=`<div class="card"><b>${sel} 공부 기록</b>
-  <input type="text" id="sj" list="sl" placeholder="과목 / 주제" style="margin:8px 0"><datalist id="sl">${subs.map(s=>`<option value="${esc(s)}">`).join('')}</datalist>
-  <input type="number" id="mn" placeholder="공부 시간 (분)" style="margin-bottom:8px">
-  <textarea id="nn" placeholder="오늘 배운 것, 헷갈린 부분…"></textarea>
-  <button class="pri" style="margin-top:8px" onclick="addLog()">저장</button></div>`;
-  const dates=[...new Set(S.logs.map(l=>l.date))].sort().reverse();
-  h+=dates.length?dates.map(d=>`<div class="card"><b>${d}</b>`+S.logs.filter(l=>l.date===d).map(l=>`<div class="item" style="background:var(--bg);color:var(--tx);align-items:flex-start"><div class="sp"><b>${esc(l.subject)}</b> <span class="mut">${l.min||0}분</span><div style="white-space:pre-wrap">${esc(l.note)}</div></div><button class="ghost" onclick="delLog('${l.id}')">✕</button></div>`).join('')+'</div>').join(''):'<div class="mut">저장한 기록이 아직 없어요.</div>';
-  return h;
+  return `<div class="card"><b>📒 ${sel} 알림장 쓰기</b>
+  <input type="text" id="sj" list="sl" placeholder="제목 / 과목" style="margin:8px 0"><datalist id="sl">${subs.map(s=>`<option value="${esc(s)}">`).join('')}</datalist>
+  <textarea id="nn" placeholder="오늘 배운 것, 숙제, 챙길 것, 기억할 말…" style="min-height:130px"></textarea>
+  <input type="number" id="mn" placeholder="공부 시간 (분, 선택)" style="margin-top:8px">
+  <button class="pri" style="margin-top:8px" onclick="addLog()">저장</button></div>
+  <div class="card"><div class="row" style="flex-wrap:nowrap"><input type="text" placeholder="🔍 알림장 검색" value="${esc(F.q)}" oninput="F.q=this.value;$('#loglist').innerHTML=logList()"><button onclick="exportLog()">내보내기</button></div></div>
+  <div id="loglist">${logList()}</div>`;
 }
-
 function timeView(){
   const run=!!S.timer,subs=[...new Set(S.sess.map(s=>s.subject))];
   const todaySec=S.sess.filter(s=>s.date===TODAY).reduce((a,s)=>a+s.sec,0)+(run?elapsed():0);
@@ -384,7 +454,7 @@ function exp(){const a=document.createElement('a');a.href=URL.createObjectURL(ne
 function imp(el){const f=el.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{Object.assign(S,JSON.parse(r.result));save();render()}catch(e){alert('파일을 읽을 수 없어요')}};r.readAsText(f)}
 
 function render(){
-  const T={cal:['📅 일정','일정'],log:['📝 공부 기록','공부 기록'],time:['⏱ 스터디 타임체크','타임체크'],ex:['💪 운동 기록','운동 기록']};
+  const T={cal:['📅 일정','일정'],log:['📒 알림장','알림장'],time:['⏱ 스터디 타임체크','타임체크'],ex:['💪 운동 기록','운동 기록']};
   $('#ttl').textContent=T[tab][0];
   $('#side').innerHTML='<h2>🐰 내 플래너</h2>'+Object.keys(T).map(k=>`<button class="${tab===k?'on':''}" onclick="tab='${k}';render()">${T[k][1]}</button>`).join('')+'<div class="face"></div>'+acctHTML();
   $('#macct').innerHTML=acctHTML();
