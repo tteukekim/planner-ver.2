@@ -89,18 +89,18 @@ const TODAY=fmt(new Date()),DAYS=['일','월','화','수','목','금','토'],SRV
 const COLORS=['#FBD45C','#F7B9C8','#FFFBD0','#D5E6A8','#BFDDF5','#D9CCF2','#C6EBD9','#FFD6B8'];
 const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-let S={tasks:[],logs:[],sess:[],hl:{},timer:null,off:{},wr:'',push:false,todos:[],ex:[],cat:{},pay:{}};
+let S={tasks:[],logs:[],sess:[],hl:{},timer:null,off:{},wr:'',push:false,todos:[],ex:[],cat:{},pay:{},logDel:[],drive:null};
 try{const r=localStorage.getItem('planner-v2')||localStorage.getItem('planner-v1');if(r)Object.assign(S,JSON.parse(r))}catch(e){}
 function save(){try{localStorage.setItem('planner-v2',JSON.stringify(S))}catch(e){}}
 let tab='cal',sel=TODAY,cm=TODAY.slice(0,7),mcp=null,cals=[],gev=[],gstat={s:'load',m:''},pick=COLORS[0],tick=null;
-let F={t:'',d1:'',d2:'',t1:'',t2:'',dest:'app',cat:'기타',pt:'시급',amt:'',todo:'',todoDest:'',todoDue:'',q:'',ex:{date:'',name:'',min:'',detail:'',note:'',push:false}};
+let F={t:'',d1:'',d2:'',t1:'',t2:'',dest:'app',cat:'기타',pt:'시급',amt:'',lg:{sj:'',nn:'',mn:''},todo:'',todoDest:'',todoDue:'',q:'',ex:{date:'',name:'',min:'',detail:'',note:'',push:false}};
 const gdate=e=>(e.start.dateTime||e.start.date||'').slice(0,10);
 const gtime=e=>e.start.dateTime?e.start.dateTime.slice(11,16):'종일';
 const hlOf=id=>S.hl[id]||'#E8E2CF';
 
 /* ---------- Google Calendar (직접 연동) ---------- */
 const CLIENT_ID='1040361663037-5rh878kkqg25d5ogjclg6tgv8ee8qmpk.apps.googleusercontent.com'; // 예: 1234-abcd.apps.googleusercontent.com
-const SCOPE='https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/tasks';
+const SCOPE='https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/tasks https://www.googleapis.com/auth/drive.file';
 const TZ=Intl.DateTimeFormat().resolvedOptions().timeZone;
 S.accts=S.accts||[];let tok={},tc=null,gtasks=[],tstat={};
 try{const r=JSON.parse(localStorage.getItem('planner-tok')||'{}');Object.keys(r).forEach(k=>{if(r[k].exp>Date.now())tok[k]=r[k]})}catch(e){}
@@ -155,7 +155,7 @@ async function syncG(){
   }
   cals=nc;gev=ne;gev.forEach((e,i)=>e._i=i);
   gstat=bad?{s:'err',m:errMsg(bad)}:{s:'ok',m:'',t:new Date()};
-  render();syncT();
+  render();syncT();if(S.drive)driveSync();
 }
 function addMin(t,m){const[h,mi]=t.split(':').map(Number);const x=h*60+mi+m;return pad(Math.floor(x/60)%24)+':'+pad(x%60)}
 async function insEv(k,title,date,st,en,endDate){
@@ -191,11 +191,8 @@ function toggle(id){const t=S.tasks.find(x=>x.id===id);t.done=!t.done;save();ren
 function delT(id){S.tasks=S.tasks.filter(x=>x.id!==id);delete S.cat[id];delete S.pay[id];save();render()}
 function setTC(id,c){S.tasks.find(x=>x.id===id).color=c;save();render()}
 const sessMin=d=>Math.round(S.sess.filter(s=>s.date===d).reduce((a,s)=>a+s.sec,0)/60)+Math.round(S.logs.filter(l=>l.date===d).reduce((a,l)=>a+(+l.min||0),0));
-function addLog(){
-  const subject=$('#sj').value.trim(),note=$('#nn').value.trim(),min=+$('#mn').value||0;
-  if(!subject&&!note)return;S.logs.push({id:uid(),date:sel,subject:subject||'기타',min,note});save();render();
-}
-function delLog(id){S.logs=S.logs.filter(x=>x.id!==id);save();render()}
+function addLog(){const g=F.lg,subject=g.sj.trim(),note=g.nn.trim(),min=+g.mn||0;if(!subject&&!note)return;S.logs.push({id:uid(),date:sel,subject:subject||'기타',min,note});F.lg={sj:'',nn:'',mn:''};save();render();if(S.drive)driveSync(true)}
+function delLog(id){S.logs=S.logs.filter(x=>x.id!==id);S.logDel=[...(S.logDel||[]),id];save();render();if(S.drive)driveSync(true)}
 
 /* ---------- timer ---------- */
 const elapsed=()=>S.timer?Math.floor((Date.now()-S.timer.start)/1000):0;
@@ -421,12 +418,73 @@ function exportLog(){
   const t=[...S.logs].sort((a,b)=>a.date.localeCompare(b.date)).map(l=>`[${l.date} (${DAYS[parse(l.date).getDay()]})] ${l.subject}${l.min?' · '+l.min+'분':''}\n${l.note}\n`).join('\n');
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([t],{type:'text/plain'}));a.download='알림장.txt';a.click();
 }
+/* Google Drive 알림장 */
+const DJ='플래너_알림장_데이터.json',DD='📒 알림장 (플래너)';
+let dstat={s:'',m:''},dchain=Promise.resolve();
+function driveSync(push){dchain=dchain.then(()=>doSync(push)).catch(()=>{});return dchain}
+async function dfetch(acct,url,opt={}){
+  const k=tok[acct];if(!k||k.exp<Date.now())throw{code:'expired',acct};
+  const r=await fetch(url,{method:opt.method||'GET',headers:{Authorization:'Bearer '+k.t,...(opt.headers||{})},body:opt.body});
+  if(r.status===401){delete tok[acct];saveTok();throw{code:'expired',acct}}
+  if(r.status===403)throw{code:'scope'};
+  if(!r.ok)throw{message:(await r.text()).slice(0,160)};
+  return opt.raw?r:(r.status===204?null:r.json());
+}
+async function dfind(a,name){const q="name='"+name.replace(/'/g,"\\'")+"' and trashed=false";const r=await dfetch(a,'https://www.googleapis.com/drive/v3/files?fields=files(id)&pageSize=1&q='+encodeURIComponent(q));return r.files&&r.files[0]?r.files[0].id:''}
+async function dcreate(a,meta,mime,content){
+  const b='pl'+uid();
+  const body='--'+b+'\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'+JSON.stringify(meta)+'\r\n--'+b+'\r\nContent-Type: '+mime+'; charset=UTF-8\r\n\r\n'+content+'\r\n--'+b+'--';
+  const r=await dfetch(a,'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',{method:'POST',headers:{'Content-Type':'multipart/related; boundary='+b},body});
+  return r.id;
+}
+async function dupdate(a,id,mime,content){await dfetch(a,'https://www.googleapis.com/upload/drive/v3/files/'+id+'?uploadType=media',{method:'PATCH',headers:{'Content-Type':mime+'; charset=UTF-8'},body:content})}
+function docText(){return '📒 알림장\n\n'+[...S.logs].sort((a,b)=>b.date.localeCompare(a.date)).map(l=>'■ '+l.date+' ('+DAYS[parse(l.date).getDay()]+') '+l.subject+(l.min?' · '+l.min+'분':'')+'\n'+l.note+'\n').join('\n')}
+async function doSync(push){
+  const D=S.drive;if(!D||!D.acct)return;const a=D.acct;
+  if(!tok[a]||tok[a].exp<Date.now()){dstat={s:'err',m:'로그인이 만료됐어요. 사이드바에서 “다시 연결”을 눌러 주세요.'};render();return}
+  dstat={s:'load',m:''};render();
+  let docErr=0;
+  try{
+    if(!D.jsonId)D.jsonId=await dfind(a,DJ);
+    let rem={logs:[],del:[]},created=false;
+    if(D.jsonId){const r=await dfetch(a,'https://www.googleapis.com/drive/v3/files/'+D.jsonId+'?alt=media',{raw:true});try{rem=JSON.parse(await r.text())}catch(e){}}
+    else created=true;
+    const rl=rem.logs||[],rd=rem.del||[];
+    const del=[...new Set([...(S.logDel||[]),...rd])];
+    const map={};[...rl,...S.logs].forEach(l=>{if(!del.includes(l.id))map[l.id]=l});
+    const logs=Object.values(map);
+    const same=!created&&logs.length===rl.length&&del.length===rd.length&&logs.every(l=>rl.some(x=>x.id===l.id));
+    S.logs=logs;S.logDel=del;save();
+    const content=JSON.stringify({logs,del});
+    if(created)D.jsonId=await dcreate(a,{name:DJ},'application/json',content);
+    else if(push||!same)await dupdate(a,D.jsonId,'application/json',content);
+    try{
+      const txt=docText();
+      if(!D.docId)D.docId=await dfind(a,DD);
+      if(!D.docId)D.docId=await dcreate(a,{name:DD,mimeType:'application/vnd.google-apps.document'},'text/plain',txt);
+      else if(push||!same||created)await dupdate(a,D.docId,'text/plain',txt);
+    }catch(e){docErr=1}
+    save();dstat={s:'ok',m:'',t:new Date(),docErr};
+  }catch(e){dstat={s:'err',m:e.code==='scope'?'드라이브 권한이 없어요. 콘솔에서 Drive API를 켠 뒤 “권한 받기”를 눌러 주세요.':e.code==='expired'?'로그인이 만료됐어요. 사이드바에서 “다시 연결”을 눌러 주세요.':(e.message||'오류')}}
+  render();
+}
+function driveErr(){return dstat.s==='err'?`<div class="bad" style="font-size:12px;margin-top:6px">${esc(dstat.m)} <button class="ghost" onclick="connect('${esc(S.drive?S.drive.acct:(S.accts[0]||''))}')">권한 받기</button></div>`:''}
+function driveOn(){const a=$('#dacct').value;S.drive={acct:a};save();driveSync(true)}
+function driveOff(){S.drive=null;dstat={s:'',m:''};save();render()}
+function driveCard(){
+  const h='<div class="card"><b>☁ 구글 드라이브에 저장</b>';
+  if(!S.accts.length)return h+'<div class="mut" style="margin-top:6px">구글 계정을 먼저 연결해 주세요. 왼쪽 아래의 “＋ 계정 추가”를 누르세요.</div></div>';
+  if(!S.drive)return h+`<div class="mut" style="margin:6px 0">알림장을 드라이브에 자동 저장해서 어느 기기에서든 볼 수 있어요.</div><div class="row" style="flex-wrap:nowrap"><select id="dacct" style="flex:1;min-width:0">${S.accts.map(a=>`<option>${esc(a)}</option>`).join('')}</select><button class="pri" onclick="driveOn()">연결</button></div>${driveErr()}</div>`;
+  const D=S.drive;
+  return h+`<div class="mut" style="margin:6px 0">${esc(D.acct)} · ${dstat.s==='load'?'동기화 중…':dstat.s==='ok'?'동기화됨 '+dstat.t.getHours()+':'+pad(dstat.t.getMinutes()):'대기 중'}</div>
+  <div class="row"><button onclick="driveSync(true)">지금 동기화</button>${D.docId?`<button onclick="window.open('https://docs.google.com/document/d/${D.docId}/edit','_blank')">문서로 보기</button>`:''}<button class="ghost" onclick="driveOff()">연결 해제</button></div>${dstat.docErr?'<div class="mut" style="font-size:12px;margin-top:4px">읽기용 문서 갱신은 실패했어요. 알림장 데이터는 저장됐어요.</div>':''}${driveErr()}</div>`;
+}
 function logView(){
-  const subs=[...new Set(S.logs.map(l=>l.subject).concat(S.sess.map(s=>s.subject)))];
-  return `<div class="card"><b>📒 ${sel} 알림장 쓰기</b>
-  <input type="text" id="sj" list="sl" placeholder="제목 / 과목" style="margin:8px 0"><datalist id="sl">${subs.map(s=>`<option value="${esc(s)}">`).join('')}</datalist>
-  <textarea id="nn" placeholder="오늘 배운 것, 숙제, 챙길 것, 기억할 말…" style="min-height:130px"></textarea>
-  <input type="number" id="mn" placeholder="공부 시간 (분, 선택)" style="margin-top:8px">
+  const subs=[...new Set(S.logs.map(l=>l.subject).concat(S.sess.map(s=>s.subject)))],g=F.lg;
+  return driveCard()+`<div class="card"><b>📒 ${sel} 알림장 쓰기</b>
+  <input type="text" id="sj" list="sl" placeholder="제목 / 과목" value="${esc(g.sj)}" oninput="F.lg.sj=this.value" style="margin:8px 0"><datalist id="sl">${subs.map(s=>`<option value="${esc(s)}">`).join('')}</datalist>
+  <textarea id="nn" oninput="F.lg.nn=this.value" placeholder="오늘 배운 것, 숙제, 챙길 것, 기억할 말…" style="min-height:130px">${esc(g.nn)}</textarea>
+  <input type="number" id="mn" value="${esc(g.mn)}" oninput="F.lg.mn=this.value" placeholder="공부 시간 (분, 선택)" style="margin-top:8px">
   <button class="pri" style="margin-top:8px" onclick="addLog()">저장</button></div>
   <div class="card"><div class="row" style="flex-wrap:nowrap"><input type="text" placeholder="🔍 알림장 검색" value="${esc(F.q)}" oninput="F.q=this.value;$('#loglist').innerHTML=logList()"><button onclick="exportLog()">내보내기</button></div></div>
   <div id="loglist">${logList()}</div>`;
