@@ -154,13 +154,18 @@ async function syncG(){
     }catch(e){if(!e||e.code!=='expired')bad=e}
   }
   cals=nc;gev=ne;gev.forEach((e,i)=>e._i=i);
+  const mig=[];
+  gev.forEach(e=>{const p=(e.extendedProperties&&e.extendedProperties.private)||{};
+    if(p.cat)S.cat[e.id]=p.cat;if(p.payAmt)S.pay[e.id]={type:p.payType||'시급',amt:+p.payAmt};if(p.hl)S.hl[e.id]=p.hl;
+    if(!p.cat&&!p.hl&&(S.cat[e.id]||S.hl[e.id]))mig.push(e.id)});
+  save();mig.forEach(id=>saveMeta(id));
   gstat=bad?{s:'err',m:errMsg(bad)}:{s:'ok',m:'',t:new Date()};
   render();syncT();if(S.drive)driveSync();
 }
 function addMin(t,m){const[h,mi]=t.split(':').map(Number);const x=h*60+mi+m;return pad(Math.floor(x/60)%24)+':'+pad(x%60)}
-async function insEv(k,title,date,st,en,endDate){
+async function insEv(k,title,date,st,en,endDate,meta){
   const c=cals.find(x=>x.k===k);if(!c)throw{message:'쓸 수 있는 캘린더가 없어요'};
-  const body={summary:title};
+  const body={summary:title};if(meta)body.extendedProperties={private:meta};
   if(!st){body.start={date};body.end={date:add(endDate||date,1)}}
   else{body.start={dateTime:date+'T'+st+':00',timeZone:TZ};body.end={dateTime:(endDate||date)+'T'+(en||addMin(st,60))+':00',timeZone:TZ}}
   return api(c.acct,'/calendars/'+encodeURIComponent(c.id)+'/events',{method:'POST',body});
@@ -171,7 +176,7 @@ async function gCreate(){
   const meta=id=>{S.cat[id]=F.cat;if(F.cat==='알바'&&+F.amt)S.pay[id]={type:F.pt,amt:+F.amt};save()};
   const reset=()=>{F.t='';F.d1='';F.d2='';F.t1='';F.t2='';F.amt='';sel=d1;cm=d1.slice(0,7)};
   if(F.dest==='app'){const id=uid();S.tasks.push({id,date:d1,end:d2,text:title,done:false,color:pick,time:st,t2:en});meta(id);reset();save();render();return}
-  try{const p=await insEv(cals[+F.dest].k,title,d1,st,en,d2);if(p&&p.id){S.hl[p.id]=pick;meta(p.id)}reset();await syncG()}
+  try{const mo={cat:F.cat,hl:pick};if(F.cat==='알바'&&+F.amt){mo.payType=F.pt;mo.payAmt=String(+F.amt)}const p=await insEv(cals[+F.dest].k,title,d1,st,en,d2,mo);if(p&&p.id){S.hl[p.id]=pick;meta(p.id)}reset();await syncG()}
   catch(e){gstat={s:'err',m:errMsg(e)};render()}
 }
 async function gDel(i){
@@ -184,7 +189,13 @@ async function gRename(i){
   try{await api(e._acct,'/calendars/'+encodeURIComponent(e._cal)+'/events/'+e.id,{method:'PATCH',body:{summary:v}});await syncG()}
   catch(x){gstat={s:'err',m:errMsg(x)};render()}
 }
-function setHl(id,c){S.hl[id]=c;save();render()}
+async function saveMeta(id){
+  const e=gev.find(x=>x.id===id);if(!e)return;
+  const p=S.pay[id],m={cat:S.cat[id]||'',hl:S.hl[id]||'',payType:p?p.type:'',payAmt:p?String(p.amt||''):''};
+  try{await api(e._acct,'/calendars/'+encodeURIComponent(e._cal)+'/events/'+id,{method:'PATCH',body:{extendedProperties:{private:m}}})}
+  catch(x){gstat={s:'err',m:errMsg(x)};render()}
+}
+function setHl(id,c){S.hl[id]=c;save();render();saveMeta(id)}
 
 /* ---------- local tasks, logs ---------- */
 function toggle(id){const t=S.tasks.find(x=>x.id===id);t.done=!t.done;save();render()}
@@ -247,8 +258,8 @@ function earn(cat,pay,sd,ed,st,en){
 }
 const catTag=c=>c?`<span class="tag" style="background:${CATC[c]||'#eee'}">${c}</span>`:'';
 const payTag=r=>r?`<span class="tag">${r.total?'₩'+r.total.toLocaleString():''}${r.note?' '+r.note:''}</span>`:'';
-function setCat(id,v){S.cat[id]=v;save();render()}
-function setPay(id,k,v){const p=S.pay[id]||{type:'시급',amt:0};p[k]=k==='amt'?+v:v;S.pay[id]=p;save();render()}
+function setCat(id,v){S.cat[id]=v;save();render();saveMeta(id)}
+function setPay(id,k,v){const p=S.pay[id]||{type:'시급',amt:0};p[k]=k==='amt'?+v:v;S.pay[id]=p;save();render();saveMeta(id)}
 function setFCat(c){F.cat=c;pick=CATC[c];render()}
 function selDay(k){sel=k;F.d1='';render()}
 function ctl(id,cur,fn){
