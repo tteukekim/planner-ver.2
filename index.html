@@ -258,7 +258,7 @@ function acctHTML(){
   const ok=a=>tok[a]&&tok[a].exp>Date.now();
   return '<div class="acct">'+S.accts.map(a=>`<div class="ar"><i class="dot ${ok(a)?'g':'o'}"></i><span title="${esc(a)}">${esc(a)}</span>${ok(a)?'':`<button onclick="connect('${esc(a)}')">다시 연결</button>`}<button onclick="rmAcct('${esc(a)}')" title="연결 해제">✕</button></div>`).join('')+`<button class="lk" onclick="connect()">＋ 계정 추가</button>${gstat.s==='load'?' <span style="opacity:.7">동기화 중…</span>':''}</div>`;
 }
-const CATS=['알바','가족행사','약속','기타'],CATC={'알바':'#BFDDF5','가족행사':'#F7B9C8','약속':'#D5E6A8','기타':'#FFFBD0'};
+const CATS=['알바','가족행사','약속','학교 행사','과제','기타'],CATC={'알바':'#BFDDF5','가족행사':'#F7B9C8','약속':'#D5E6A8','학교 행사':'#D9CCF2','과제':'#FFD6B8','기타':'#FFFBD0'};
 const evInfo=e=>{const sd=gdate(e),ed=e.end?(e.end.date?add(e.end.date,-1):e.end.dateTime.slice(0,10)):sd;return{sd,ed:ed<sd?sd:ed,st:e.start.dateTime?e.start.dateTime.slice(11,16):'',en:e.end&&e.end.dateTime?e.end.dateTime.slice(11,16):''}};
 const evOn=(e,k)=>{const i=evInfo(e);return i.sd<=k&&k<=i.ed};
 const taskOn=(t,k)=>t.date<=k&&k<=(t.end||t.date);
