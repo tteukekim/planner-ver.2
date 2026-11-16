@@ -90,10 +90,12 @@ aside button.on::after{right:10px;bottom:-1px;top:auto;width:42px;height:33px}
 .peekc{position:relative}
 @media (max-width:720px){aside h2{display:none}aside button.on::after{right:50%;margin-right:-23px;top:-30px;bottom:auto;width:40px;height:32px}.peekc::before{right:18px;top:-29px;width:40px;height:31px}}
 </style>
+<style>.md{position:fixed;inset:0;background:rgba(40,30,20,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}.md .box{background:var(--card);color:var(--tx);border:2px solid var(--bd);border-radius:18px;padding:16px;max-width:480px;width:100%;max-height:90vh;overflow:auto}</style>
 </head>
 <body>
 <aside id="side"></aside>
 <main><h1 id="ttl"></h1><div id="macct" class="macct"></div><div id="app"></div></main>
+<div id="md"></div>
 <script>
 const $=s=>document.querySelector(s);
 const pad=n=>String(n).padStart(2,'0');
@@ -383,9 +385,9 @@ function calView(){
   const d=parse(sel);
   h+=`<div class="card"><b>${d.getMonth()+1}월 ${d.getDate()}일 (${DAYS[d.getDay()]})</b> <span class="mut">공부 ${sessMin(sel)}분</span><div style="margin-top:8px">`;
   h+=dg.map(e=>{const i=evInfo(e),r=earn(S.cat[e.id],S.pay[e.id],i.sd,i.ed,i.st,i.en);
-    return `<div class="item" style="background:${hlOf(e.id)}"><span class="t sp"><b>${gtime(e)}</b> ${esc(e.summary||'(제목 없음)')}${i.sd!==i.ed?` <span class="mut">(${i.sd.slice(5)}~${i.ed.slice(5)})</span>`:''} ${catTag(S.cat[e.id])}${payTag(r)} <span class="tag">${esc(e._calName.split('@')[0])}</span></span><button class="ghost" onclick="gRename(${e._i})">✎</button><button class="ghost" onclick="gDel(${e._i})">✕</button></div>${ctl(e.id,S.hl[e.id],'setHl')}`}).join('');
+    return `<div class="item" style="background:${hlOf(e.id)}"><span class="t sp"><b>${gtime(e)}</b> ${esc(e.summary||'(제목 없음)')}${i.sd!==i.ed?` <span class="mut">(${i.sd.slice(5)}~${i.ed.slice(5)})</span>`:''} ${catTag(S.cat[e.id])}${payTag(r)} <span class="tag">${esc(e._calName.split('@')[0])}</span></span><button class="ghost" onclick="openEdit('g',${e._i})">✎</button><button class="ghost" onclick="gDel(${e._i})">✕</button></div>${ctl(e.id,S.hl[e.id],'setHl')}`}).join('');
   h+=dt.map(t=>{const r=earn(S.cat[t.id],S.pay[t.id],t.date,t.end||t.date,t.time,t.t2);
-    return `<div class="item ${t.done?'done':''}" style="background:${t.color||COLORS[0]}"><input type="checkbox" ${t.done?'checked':''} onchange="toggle('${t.id}')"><span class="t sp">${t.time?`<b>${t.time}</b> `:''}${esc(t.text)}${t.end&&t.end!==t.date?` <span class="mut">(${t.date.slice(5)}~${t.end.slice(5)})</span>`:''} ${catTag(S.cat[t.id])}${payTag(r)} <span class="tag">앱</span></span><button class="ghost" onclick="delT('${t.id}')">✕</button></div>${ctl(t.id,t.color,'setTC')}`}).join('');
+    return `<div class="item ${t.done?'done':''}" style="background:${t.color||COLORS[0]}"><input type="checkbox" ${t.done?'checked':''} onchange="toggle('${t.id}')"><span class="t sp">${t.time?`<b>${t.time}</b> `:''}${esc(t.text)}${t.end&&t.end!==t.date?` <span class="mut">(${t.date.slice(5)}~${t.end.slice(5)})</span>`:''} ${catTag(S.cat[t.id])}${payTag(r)} <span class="tag">앱</span></span><button class="ghost" onclick="openEdit('t','${t.id}')">✎</button><button class="ghost" onclick="delT('${t.id}')">✕</button></div>${ctl(t.id,t.color,'setTC')}`}).join('');
   h+=dx.map(x=>`<div class="item" style="background:#FFD6B8"><span class="t sp"><i class="exb"></i> <b>${esc(x.name)}</b> ${x.min?x.min+'분':''} ${esc(x.detail)}</span></div>`).join('');
   if(!dg.length&&!dt.length&&!dx.length)h+='<div class="mut">이 날은 일정이 없어요.</div>';
   h+='</div></div>';
@@ -430,6 +432,58 @@ function exView(){
   const dates=[...new Set(S.ex.map(x=>x.date))].sort().reverse();
   h+=dates.length?dates.map(k=>`<div class="card"><b>${k}</b>`+S.ex.filter(x=>x.date===k).map(x=>`<div class="item" style="background:var(--bg);color:var(--tx);align-items:flex-start"><div class="sp"><b>${esc(x.name)}</b> <span class="mut">${x.min?x.min+'분':''} ${esc(x.detail)}</span>${x.note?`<div style="white-space:pre-wrap">${esc(x.note)}</div>`:''}</div><button class="ghost" onclick="delEx('${x.id}')">✕</button></div>`).join('')+'</div>').join(''):'<div class="mut">아직 운동 기록이 없어요.</div>';
   return h;
+}
+/* 일정 전체 수정 */
+let ED=null;
+function openEdit(kind,ref){
+  if(kind==='g'){
+    const e=gev[ref];if(!e)return;const i=evInfo(e),pay=S.pay[e.id]||{};
+    ED={kind,ev:e,title:e.summary||'',d1:i.sd,d2:i.ed,t1:i.st,t2:i.en,cat:S.cat[e.id]||'기타',pt:pay.type||'시급',amt:pay.amt?String(pay.amt):'',color:S.hl[e.id]||'#E8E2CF',cal:e._calName};
+  }else{
+    const t=S.tasks.find(x=>x.id===ref);if(!t)return;const pay=S.pay[ref]||{};
+    ED={kind,id:ref,title:t.text,d1:t.date,d2:t.end||t.date,t1:t.time||'',t2:t.t2||'',cat:S.cat[ref]||'기타',pt:pay.type||'시급',amt:pay.amt?String(pay.amt):'',color:t.color||COLORS[0]};
+  }
+  drawEdit();
+}
+function closeEdit(){ED=null;$('#md').innerHTML=''}
+function edColor(c){ED.color=c;drawEdit()}
+function drawEdit(){
+  const E=ED;if(!E){$('#md').innerHTML='';return}
+  $('#md').innerHTML=`<div class="md" onclick="if(event.target===this)closeEdit()"><div class="box">
+  <b>일정 수정</b>${E.kind==='g'?` <span class="mut">· ${esc(E.cal)}</span>`:' <span class="mut">· 앱 일정</span>'}
+  <input type="text" value="${esc(E.title)}" oninput="ED.title=this.value" style="margin:8px 0">
+  <div class="row"><span class="mut">날짜</span><input type="date" value="${E.d1}" oninput="ED.d1=this.value"><span>~</span><input type="date" value="${E.d2}" oninput="ED.d2=this.value"></div>
+  <div class="row" style="margin-top:6px"><span class="mut">시간</span><input type="time" value="${E.t1}" oninput="ED.t1=this.value"><span>~</span><input type="time" value="${E.t2}" oninput="ED.t2=this.value"></div>
+  <div class="mut" style="margin:2px 0 8px">시작 시간을 비우면 종일 일정이에요.</div>
+  <div class="row">${CATS.map(c=>`<button class="catchip ${E.cat===c?'on':''}" style="background:${CATC[c]}" onclick="ED.cat='${c}';drawEdit()">${E.cat===c?'✓ ':''}${c}</button>`).join('')}</div>
+  ${E.cat==='알바'?`<div class="row" style="margin-top:8px"><select onchange="ED.pt=this.value;drawEdit()"><option ${E.pt==='시급'?'selected':''}>시급</option><option ${E.pt==='일급'?'selected':''}>일급</option></select><input type="number" placeholder="${E.pt} (원)" value="${esc(E.amt)}" oninput="ED.amt=this.value" style="flex:1;width:auto;min-width:110px"></div>`:''}
+  <div class="mut" style="margin:10px 0 4px">하이라이트 색</div>${swHTML(E.color,'edColor')}
+  ${E.err?`<div class="bad" style="margin-top:8px;font-size:13px">${esc(E.err)}</div>`:''}
+  <div class="row" style="margin-top:14px"><button class="pri" onclick="saveEdit()" ${E.busy?'disabled':''}>${E.busy?'저장 중…':'저장'}</button><button onclick="closeEdit()">취소</button></div>
+  </div></div>`;
+}
+async function saveEdit(){
+  const E=ED;if(!E||E.busy)return;
+  const title=E.title.trim()||'(제목 없음)',d1=E.d1,d2=(E.d2&&E.d2>=E.d1)?E.d2:E.d1;
+  if(!d1){E.err='날짜를 입력해 주세요.';drawEdit();return}
+  const alba=E.cat==='알바'&&+E.amt>0;
+  if(E.kind==='t'){
+    const t=S.tasks.find(x=>x.id===E.id);if(!t){closeEdit();return}
+    Object.assign(t,{text:title,date:d1,end:d2,time:E.t1,t2:E.t2,color:E.color});
+    S.cat[E.id]=E.cat;if(alba)S.pay[E.id]={type:E.pt,amt:+E.amt};else delete S.pay[E.id];
+    save();sel=d1;cm=d1.slice(0,7);closeEdit();render();return;
+  }
+  const e=E.ev;
+  const priv={cat:E.cat,hl:E.color,payType:alba?E.pt:'',payAmt:alba?String(+E.amt):''};
+  const body={summary:title,extendedProperties:{private:priv}};
+  if(!E.t1){body.start={date:d1,dateTime:null,timeZone:null};body.end={date:add(d2,1),dateTime:null,timeZone:null}}
+  else{body.start={dateTime:d1+'T'+E.t1+':00',timeZone:TZ,date:null};body.end={dateTime:d2+'T'+(E.t2||addMin(E.t1,60))+':00',timeZone:TZ,date:null}}
+  try{
+    E.busy=true;E.err='';drawEdit();
+    await api(e._acct,'/calendars/'+encodeURIComponent(e._cal)+'/events/'+e.id,{method:'PATCH',body});
+    S.cat[e.id]=E.cat;S.hl[e.id]=E.color;if(alba)S.pay[e.id]={type:E.pt,amt:+E.amt};else delete S.pay[e.id];
+    save();sel=d1;cm=d1.slice(0,7);closeEdit();await syncG();
+  }catch(x){E.busy=false;E.err=errMsg(x);drawEdit()}
 }
 function togCal(id){S.off[id]=!S.off[id];save();syncG()}
 function mv(n){const[y,m]=cm.split('-').map(Number);const d=new Date(y,m-1+n,1);cm=d.getFullYear()+'-'+pad(d.getMonth()+1);sel=cm+'-01';syncG()}
@@ -510,7 +564,6 @@ function logView(){
   return driveCard()+`<div class="card"><b>📒 ${sel} 알림장 쓰기</b>
   <input type="text" id="sj" list="sl" placeholder="제목 / 과목" value="${esc(g.sj)}" oninput="F.lg.sj=this.value" style="margin:8px 0"><datalist id="sl">${subs.map(s=>`<option value="${esc(s)}">`).join('')}</datalist>
   <textarea id="nn" oninput="F.lg.nn=this.value" placeholder="오늘 배운 것, 숙제, 챙길 것, 기억할 말…" style="min-height:130px">${esc(g.nn)}</textarea>
-  <input type="number" id="mn" value="${esc(g.mn)}" oninput="F.lg.mn=this.value" placeholder="공부 시간 (분, 선택)" style="margin-top:8px">
   <button class="pri" style="margin-top:8px" onclick="addLog()">저장</button></div>
   <div class="card"><div class="row" style="flex-wrap:nowrap"><input type="text" placeholder="🔍 알림장 검색" value="${esc(F.q)}" oninput="F.q=this.value;$('#loglist').innerHTML=logList()"><button onclick="exportLog()">내보내기</button></div></div>
   <div id="loglist">${logList()}</div>`;
