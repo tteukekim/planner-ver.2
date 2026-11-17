@@ -92,6 +92,7 @@ aside button.on::after{right:10px;bottom:-1px;top:auto;width:42px;height:33px}
 </style>
 <style>.md{position:fixed;inset:0;background:rgba(40,30,20,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}.md .box{background:var(--card);color:var(--tx);border:2px solid var(--bd);border-radius:18px;padding:16px;max-width:480px;width:100%;max-height:90vh;overflow:auto}</style>
 <style>.ttblk{position:absolute;left:2px;right:2px;border-radius:8px;padding:2px 4px;font-size:11px;line-height:1.25;overflow:hidden;color:#4a2f27;cursor:pointer}</style>
+<style>aside .acct{margin-top:236px}@media (min-width:721px){aside{overflow-y:auto}}</style>
 </head>
 <body>
 <aside id="side"></aside>
@@ -508,34 +509,38 @@ function twHTML(){
   const m=F.tw||'today',end=add(TODAY,6),T=terms()[0]||'';
   const open=S.items.filter(i=>i.status!=='완료').sort((a,b)=>(a.date+(a.time||'')).localeCompare(b.date+(b.time||'')));
   const over=open.filter(i=>i.date<TODAY),win=open.filter(i=>i.date>=TODAY&&i.date<=(m==='today'?TODAY:end));
-  const cls=m==='today'?S.subj.filter(x=>x.term===T&&(x.days||[]).includes(parse(TODAY).getDay())&&x.start).sort((a,b)=>a.start.localeCompare(b.start)):[];
+  const dow=parse(TODAY).getDay(),cls=m==='today'?S.subj.filter(x=>x.term===T).flatMap(x=>slotsOf(x).filter(l=>l.days.includes(dow)&&l.start).map(l=>({x,l}))).sort((a,b)=>a.l.start.localeCompare(b.l.start)):[];
   const evs=gev.filter(e=>{const i=evInfo(e);return i.ed>=TODAY&&i.sd<=(m==='today'?TODAY:end)});
-  const rows=cls.map(x=>`<div class="item" style="background:${x.color||COLORS[4]}"><span class="t sp">🎓 <b>${x.start}~${x.end}</b> ${esc(x.name)}${x.room?` <span class="mut">${esc(x.room)}</span>`:''}</span></div>`).join('')
+  const rows=cls.map(({x,l})=>`<div class="item" style="background:${x.color||COLORS[4]}"><span class="t sp">🎓 <b>${l.start}~${l.end}</b> ${esc(x.name)}${l.room?` <span class="mut">${esc(l.room)}</span>`:''}</span></div>`).join('')
    +over.map(itemRow).join('')+win.map(itemRow).join('')
    +evs.map(e=>`<div class="item" style="background:${hlOf(e.id)}"><span class="t sp"><b>${gtime(e)}</b> ${esc(e.summary||'(제목 없음)')} <span class="mut" style="font-size:11px">${evInfo(e).sd.slice(5)}</span></span></div>`).join('');
   return `<div class="card"><div class="row"><b>📌 ${m==='today'?'Today':'Weekly'}</b><span class="mut sp">${m==='today'?'오늘':'오늘부터 7일'}${over.length?` · <span class="bad">밀린 ${over.length}개</span>`:''}</span>${[['today','오늘'],['week','이번 주']].map(([k,n])=>`<button class="catchip ${m===k?'on':''}" style="background:var(--bd);padding:2px 10px" onclick="F.tw='${k}';render()">${n}</button>`).join('')}</div><div style="margin-top:8px">${rows||'<div class="mut">비어 있어요 🎉 학교 탭에서 시험·과제를 추가하면 여기에 나타나요.</div>'}</div></div>`;
 }
 /* 과목 */
-function openSubj(id){const x=id?S.subj.find(y=>y.id===id):null;SM=x?{...x,days:[...(x.days||[])]}:{id:'',name:'',credit:'',cat:'전공선택',days:[],start:'',end:'',room:'',term:curTerm()||'2026-2학기',color:COLORS[4]};drawSubj()}
-function togDay(v){const d=SM.days,i=d.indexOf(v);i<0?d.push(v):d.splice(i,1);drawSubj()}
+const slotsOf=x=>(x.slots&&x.slots.length)?x.slots:[{days:x.days||[],start:x.start||'',end:x.end||'',room:x.room||''}];
+const emptySlot=()=>({days:[],start:'',end:'',room:''});
+function openSubj(id){const x=id?S.subj.find(y=>y.id===id):null;SM=x?{...x,slots:slotsOf(x).map(l=>({...l,days:[...l.days]}))}:{id:'',name:'',credit:'',cat:'전공선택',slots:[emptySlot()],term:curTerm()||'2026-2학기',color:COLORS[4]};drawSubj()}
+function togDay(i,v){const d=SM.slots[i].days,j=d.indexOf(v);j<0?d.push(v):d.splice(j,1);drawSubj()}
+function addSlot(){SM.slots.push(emptySlot());drawSubj()}
+function rmSlot(i){SM.slots.splice(i,1);if(!SM.slots.length)SM.slots.push(emptySlot());drawSubj()}
 function subjColor(c){SM.color=c;drawSubj()}
 function drawSubj(){
   const x=SM;if(!x){$('#md').innerHTML='';return}
   $('#md').innerHTML=`<div class="md" onclick="if(event.target===this)closeEdit()"><div class="box"><b>${x.id?'과목 수정':'과목 추가'}</b>
   <input type="text" placeholder="과목명" value="${esc(x.name)}" oninput="SM.name=this.value" style="margin:8px 0">
-  <div class="row" style="flex-wrap:nowrap"><input type="number" placeholder="학점" value="${esc(x.credit)}" oninput="SM.credit=this.value" style="width:80px"><input type="text" placeholder="학기 (예: 2026-2학기)" value="${esc(x.term)}" oninput="SM.term=this.value"></div>
+  <div class="row" style="flex-wrap:nowrap"><input type="number" placeholder="학점" value="${x.credit||''}" oninput="SM.credit=this.value" style="width:80px"><input type="text" placeholder="학기 (예: 2026-2학기)" value="${esc(x.term)}" oninput="SM.term=this.value"></div>
   <div class="row" style="margin-top:8px">${SCATS.map(c=>`<button class="catchip ${x.cat===c?'on':''}" style="background:var(--bd)" onclick="SM.cat='${c}';drawSubj()">${x.cat===c?'✓ ':''}${c}</button>`).join('')}</div>
-  <div class="mut" style="margin:8px 0 4px">요일</div><div class="row">${DN.map(([n,v])=>`<button class="catchip ${x.days.includes(v)?'on':''}" style="background:var(--bd)" onclick="togDay(${v})">${n}</button>`).join('')}</div>
-  <div class="row" style="margin-top:8px"><span class="mut">시간</span><input type="time" value="${x.start}" oninput="SM.start=this.value"><span>~</span><input type="time" value="${x.end}" oninput="SM.end=this.value"></div>
-  <input type="text" placeholder="강의실" value="${esc(x.room)}" oninput="SM.room=this.value" style="margin-top:8px">
+  <div class="mut" style="margin:8px 0 0">수업 시간 (요일마다 시간이 다르면 시간대를 추가하세요)</div>
+  ${x.slots.map((l,i)=>`<div style="border:1.5px solid var(--bd);border-radius:12px;padding:8px;margin-top:8px"><div class="row">${DN.map(([n,v])=>`<button class="catchip ${l.days.includes(v)?'on':''}" style="background:var(--bd);padding:3px 10px" onclick="togDay(${i},${v})">${n}</button>`).join('')}${x.slots.length>1?`<button class="ghost" onclick="rmSlot(${i})">✕</button>`:''}</div><div class="row" style="margin-top:6px"><input type="time" value="${l.start}" oninput="SM.slots[${i}].start=this.value"><span>~</span><input type="time" value="${l.end}" oninput="SM.slots[${i}].end=this.value"></div><input type="text" placeholder="강의실" value="${esc(l.room)}" oninput="SM.slots[${i}].room=this.value" style="margin-top:6px"></div>`).join('')}
+  <button style="margin-top:8px" onclick="addSlot()">＋ 다른 시간대 추가</button>
   <div class="mut" style="margin:8px 0 4px">색</div>${swHTML(x.color,'subjColor')}
   ${x.err?`<div class="bad" style="margin-top:8px;font-size:13px">${esc(x.err)}</div>`:''}
   <div class="row" style="margin-top:14px"><button class="pri" onclick="saveSubj()">저장</button><button onclick="closeEdit()">취소</button>${x.id?`<button class="ghost" onclick="delSubj('${x.id}')">삭제</button>`:''}</div></div></div>`;
 }
 function saveSubj(){
   const x=SM;if(!x.name.trim()){x.err='과목명을 입력해 주세요.';drawSubj();return}
-  if(x.start&&x.end&&x.end<=x.start){x.err='종료 시간이 시작보다 늦어야 해요.';drawSubj();return}
-  const o={id:x.id||uid(),name:x.name.trim(),credit:+x.credit||0,cat:x.cat,days:x.days,start:x.start,end:x.end,room:x.room.trim(),term:x.term.trim(),color:x.color,u:Date.now()};
+  if(x.slots.some(l=>l.start&&l.end&&l.end<=l.start)){x.err='종료 시간이 시작보다 늦어야 해요.';drawSubj();return}
+  const o={id:x.id||uid(),name:x.name.trim(),credit:+x.credit||0,cat:x.cat,slots:x.slots.filter(l=>l.days.length).map(l=>({...l,room:l.room.trim()})),term:x.term.trim(),color:x.color,u:Date.now()};
   const i=S.subj.findIndex(y=>y.id===o.id);i<0?S.subj.push(o):S.subj[i]=o;
   F.term=o.term;closeEdit();persist();
 }
@@ -569,13 +574,14 @@ function itemsHTML(){
 }
 /* 시간표 */
 function ttHTML(L){
-  const used=d=>L.some(x=>(x.days||[]).includes(d)),ds=[1,2,3,4,5,...(used(6)?[6]:[]),...(used(0)?[0]:[])];
-  const ms=L.filter(x=>x.start&&x.end).flatMap(x=>[mm(x.start),mm(x.end)]);
+  const P=L.flatMap(x=>slotsOf(x).filter(l=>l.start&&l.end).map(l=>({x,l})));
+  const used=d=>P.some(({l})=>l.days.includes(d)),ds=[1,2,3,4,5,...(used(6)?[6]:[]),...(used(0)?[0]:[])];
+  const ms=P.flatMap(({l})=>[mm(l.start),mm(l.end)]);
   const t0=Math.floor(Math.min(540,...ms)/60),t1=Math.ceil(Math.max(1080,...ms)/60),K=0.8,H=(t1-t0)*60*K;
   const name={1:'월',2:'화',3:'수',4:'목',5:'금',6:'토',0:'일'};
   let h=`<div class="card" style="padding:8px"><div style="display:grid;grid-template-columns:30px repeat(${ds.length},1fr)"><div></div>${ds.map(d=>`<b style="text-align:center;font-size:12px;padding:4px 0">${name[d]}</b>`).join('')}`;
   h+=`<div style="position:relative;height:${H}px">${Array.from({length:t1-t0},(_,i)=>`<span class="mut" style="position:absolute;top:${i*60*K}px;font-size:10px">${t0+i}</span>`).join('')}</div>`;
-  ds.forEach(d=>{h+=`<div style="position:relative;height:${H}px;border-left:1px solid var(--bd);background-image:linear-gradient(var(--bd) 1px,transparent 1px);background-size:100% ${60*K}px">`+L.filter(x=>(x.days||[]).includes(d)&&x.start&&x.end).map(x=>`<div class="ttblk" style="top:${(mm(x.start)-t0*60)*K}px;height:${(mm(x.end)-mm(x.start))*K-2}px;background:${x.color||COLORS[4]}" onclick="openSubj('${x.id}')"><b>${esc(x.name)}</b><br>${esc(x.room||'')}</div>`).join('')+'</div>'});
+  ds.forEach(d=>{h+=`<div style="position:relative;height:${H}px;border-left:1px solid var(--bd);background-image:linear-gradient(var(--bd) 1px,transparent 1px);background-size:100% ${60*K}px">`+P.filter(({l})=>l.days.includes(d)).map(({x,l})=>`<div class="ttblk" style="top:${(mm(l.start)-t0*60)*K}px;height:${(mm(l.end)-mm(l.start))*K-2}px;background:${x.color||COLORS[4]}" onclick="openSubj('${x.id}')"><b>${esc(x.name)}</b><br>${esc(l.room||'')}</div>`).join('')+'</div>'});
   return h+'</div></div>';
 }
 function schView(){
@@ -587,7 +593,7 @@ function schView(){
   h+=`<div class="row" style="margin-bottom:8px">${ts.length?`<select onchange="F.term=this.value;render()">${ts.map(t=>`<option ${t===T?'selected':''}>${esc(t)}</option>`).join('')}</select>`:''}<span class="sp mut">${L.length?`${L.length}과목 · ${L.reduce((a,x)=>a+x.credit,0)}학점`:''}</span><button class="pri" onclick="openSubj()">＋ 과목 추가</button></div>`;
   if(!L.length)return h+'<div class="card mut">아직 과목이 없어요. “＋ 과목 추가”로 이번 학기 수업을 넣어 보세요. 요일과 시간을 넣으면 시간표가 자동으로 그려져요.</div>';
   if(sub==='tt')return h+ttHTML(L);
-  return h+SCATS.map(c=>{const l=L.filter(x=>x.cat===c);return l.length?`<div class="card"><b>${c}</b>${l.map(x=>`<div class="item" style="background:${x.color||COLORS[4]};margin-top:8px"><span class="t sp"><b>${esc(x.name)}</b> <span class="tag">${x.credit}학점</span><span class="mut" style="display:block;font-size:11px">${(x.days||[]).map(d=>DN.find(y=>y[1]===d)[0]).join('·')} ${x.start?x.start+'~'+x.end:''} ${esc(x.room||'')}</span></span><button class="ghost" onclick="openSubj('${x.id}')">✎</button></div>`).join('')}</div>`:''}).join('');
+  return h+SCATS.map(c=>{const l=L.filter(x=>x.cat===c);return l.length?`<div class="card"><b>${c}</b>${l.map(x=>`<div class="item" style="background:${x.color||COLORS[4]};margin-top:8px"><span class="t sp"><b>${esc(x.name)}</b> <span class="tag">${x.credit}학점</span><span class="mut" style="display:block;font-size:11px">${slotsOf(x).map(l=>(l.days.map(d=>DN.find(y=>y[1]===d)[0]).join('·'))+' '+(l.start?l.start+'~'+l.end:'')+' '+esc(l.room||'')).join(' / ')}</span></span><button class="ghost" onclick="openSubj('${x.id}')">✎</button></div>`).join('')}</div>`:''}).join('');
 }
 /* 강의 노트: 과목 · 주차 · 복습 체크 · 진행률 */
 const safeUrl=u=>/^https?:\/\//i.test(u||'')?u:'';
@@ -740,15 +746,25 @@ function exp(){const a=document.createElement('a');a.href=URL.createObjectURL(ne
 function imp(el){const f=el.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{Object.assign(S,JSON.parse(r.result));save();render()}catch(e){alert('파일을 읽을 수 없어요')}};r.readAsText(f)}
 
 function render(){
-  const T={cal:['📅 일정','일정'],log:['📒 알림장','알림장'],time:['⏱ 스터디 타임체크','타임체크'],ex:['💪 운동 기록','운동 기록'],sch:['🎓 학교','학교']};
+  const T={cal:['📅 일정','일정'],sch:['🎓 학교','학교'],log:['📒 알림장','알림장'],time:['⏱ 스터디 타임체크','타임체크'],ex:['💪 운동 기록','운동 기록']};
   $('#ttl').textContent=T[tab][0];
-  $('#side').innerHTML='<h2><i class="logo"></i> 내 플래너</h2>'+Object.keys(T).map(k=>`<button class="${tab===k?'on':''}" onclick="tab='${k}';render()">${T[k][1]}</button>`).join('')+'<div class="face"></div>'+acctHTML();
+  $('#side').innerHTML='<h2><i class="logo"></i> 내 플래너</h2>'+Object.keys(T).map(k=>`<button class="${tab===k?'on':''}" onclick="tab='${k}';render()">${T[k][1]}</button>`).join('')+acctHTML()+'<div class="face"></div>';
   $('#macct').innerHTML=acctHTML();
   $('#app').innerHTML={cal:calView,log:logView,time:timeView,ex:exView,sch:schView}[tab]();
   clearInterval(tick);
   if(S.timer&&tab==='time')tick=setInterval(()=>{const c=$('#clock');if(c)c.textContent=hms(elapsed());const t=$('#tot');if(t)t.textContent=hms(S.sess.filter(s=>s.date===TODAY).reduce((a,s)=>a+s.sec,0)+elapsed())},1000);
 }
-render();initG();
+const SEED=[
+ {id:'seed-histo',name:'임상조직검사학 및 실험II',color:'#F2B5AA',slots:[{days:[1],start:'09:00',end:'12:50',room:'범석관 B152'}]},
+ {id:'seed-physio',name:'임상생리학 및 실험II',color:'#A9DCCF',slots:[{days:[2],start:'09:00',end:'12:50',room:'범석관 B155'}]},
+ {id:'seed-urine',name:'요화학 및 실험',color:'#CDBFEA',slots:[{days:[5],start:'09:00',end:'12:50',room:'범석관 B152'}]},
+ {id:'seed-cpr',name:'심폐소생술',color:'#C9DDA0',slots:[{days:[3],start:'10:00',end:'12:50',room:'뉴밀B110'},{days:[1],start:'18:00',end:'19:00',room:'뉴밀B110'}]},
+ {id:'seed-immuno',name:'면역학',color:'#B5CBF0',slots:[{days:[2],start:'13:00',end:'15:50',room:'뉴 501'}]},
+ {id:'seed-transf',name:'수혈학및실험',color:'#F5C9A0',slots:[{days:[3],start:'13:00',end:'15:50',room:'뉴 501'}]},
+ {id:'seed-nano',name:'나노바이오체외진단학',color:'#EBD59A',slots:[{days:[1],start:'14:00',end:'15:50',room:'지천관 B149'}]}
+].map(x=>({credit:0,cat:'기타',term:'2026-2학기',u:1,...x}));
+function seedSubj(){let ch=false;SEED.forEach(x=>{if(!S.subj.some(y=>y.id===x.id)&&!(S.logDel||[]).includes(x.id)){S.subj.push({...x,slots:x.slots.map(l=>({...l,days:[...l.days]}))});ch=true}});if(ch)save()}
+seedSubj();render();initG();
 if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
 </script>
 </body>
