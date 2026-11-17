@@ -91,6 +91,7 @@ aside button.on::after{right:10px;bottom:-1px;top:auto;width:42px;height:33px}
 @media (max-width:720px){aside h2{display:none}aside button.on::after{right:50%;margin-right:-23px;top:-30px;bottom:auto;width:40px;height:32px}.peekc::before{right:18px;top:-29px;width:40px;height:31px}}
 </style>
 <style>.md{position:fixed;inset:0;background:rgba(40,30,20,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}.md .box{background:var(--card);color:var(--tx);border:2px solid var(--bd);border-radius:18px;padding:16px;max-width:480px;width:100%;max-height:90vh;overflow:auto}</style>
+<style>.ttblk{position:absolute;left:2px;right:2px;border-radius:8px;padding:2px 4px;font-size:11px;line-height:1.25;overflow:hidden;color:#4a2f27;cursor:pointer}</style>
 </head>
 <body>
 <aside id="side"></aside>
@@ -106,7 +107,7 @@ const TODAY=fmt(new Date()),DAYS=['일','월','화','수','목','금','토'],SRV
 const COLORS=['#FBD45C','#F7B9C8','#FFFBD0','#D5E6A8','#BFDDF5','#D9CCF2','#C6EBD9','#FFD6B8'];
 const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-let S={tasks:[],logs:[],sess:[],hl:{},timer:null,off:{},wr:'',push:false,todos:[],ex:[],cat:{},pay:{},logDel:[],drive:null};
+let S={tasks:[],logs:[],sess:[],hl:{},timer:null,off:{},wr:'',push:false,todos:[],ex:[],cat:{},pay:{},logDel:[],drive:null,subj:[],items:[],notes:[]};
 try{const r=localStorage.getItem('planner-v2')||localStorage.getItem('planner-v1');if(r)Object.assign(S,JSON.parse(r))}catch(e){}
 function save(){try{localStorage.setItem('planner-v2',JSON.stringify(S))}catch(e){}}
 let tab='cal',sel=TODAY,cm=TODAY.slice(0,7),mcp=null,cals=[],gev=[],gstat={s:'load',m:''},pick=COLORS[0],tick=null;
@@ -243,7 +244,7 @@ async function tStop(){
     }catch(e){gstat={s:'err',m:errMsg(e)};render()}
   }
 }
-function delS(id){S.sess=S.sess.filter(x=>x.id!==id);save();render()}
+function delS(id){S.sess=S.sess.filter(x=>x.id!==id);S.logDel=[...(S.logDel||[]),id];save();render();if(S.drive)driveSync(true)}
 function setPush(v){S.push=v;save()}
 function setWr(v){S.wr=v;save()}
 
@@ -367,29 +368,30 @@ function monthSum(){
 function calView(){
   const[y,m]=cm.split('-').map(Number),first=new Date(y,m-1,1).getDay(),n=new Date(y,m,0).getDate();
   const wcals=cals.filter(isW);
-  let h=todoHTML();
+  let h=todoHTML()+twHTML();
   h+=(gstat.s==='err'||gstat.s==='none')?`<div class="bad" style="margin-bottom:8px;font-size:13px">${esc(gstat.m)}</div>`:'';
   h+=`<div class="card"><div class="mhead"><button class="ghost" onclick="mv(-1)">◀</button><b class="mt">${y}년 ${m}월</b><button class="ghost" onclick="mv(1)">▶</button><button class="ghost rf" onclick="syncG()" title="새로고침">↻</button></div>`;
   h+=`<div class="wkrow"><i class="d d1"></i><i class="d d2"></i><i class="d d3"></i><i class="d d4"></i><div class="cal wk">${DAYS.map((d,i)=>`<b class="${i==0?'su':i==6?'sa':''}" style="text-align:center">${d}</b>`).join('')}</div></div><div class="cal">`;
   for(let i=0;i<first;i++)h+='<span></span>';
   for(let d=1;d<=n;d++){
     const k=cm+'-'+pad(d);
-    const evs=[...gev.filter(e=>evOn(e,k)).map(e=>({t:e.summary,c:hlOf(e.id)})),...S.tasks.filter(t=>taskOn(t,k)).map(t=>({t:t.text,c:t.color||COLORS[0]}))];
+    const evs=[...gev.filter(e=>evOn(e,k)).map(e=>({t:e.summary,c:hlOf(e.id)})),...S.tasks.filter(t=>taskOn(t,k)).map(t=>({t:t.text,c:t.color||COLORS[0]})),...S.items.filter(i=>i.date===k).map(i=>({t:'['+i.type+'] '+i.title,c:ITC[i.type]||'#eee'}))];
     const sm=sessMin(k),exs=S.ex.filter(x=>x.date===k),exm=exs.reduce((a,x)=>a+x.min,0);
     h+=`<button class="cell ${k===sel?'sel':''} ${k===TODAY?'today':''}" onclick="selDay('${k}')"><span class="dn">${d}</span>${evs.slice(0,3).map(e=>`<span class="chip" style="background:${e.c}">${esc(e.t||'(제목 없음)')}</span>`).join('')}${evs.length>3?`<span class="mut" style="font-size:10px">+${evs.length-3}</span>`:''}${sm?`<span class="chip" style="background:#D5E6A8">📚 ${Math.floor(sm/60)?Math.floor(sm/60)+'h ':''}${sm%60}m</span>`:''}${exs.length?`<span class="chip" style="background:#FFD6B8"><i class="exb"></i> ${exm?exm+'m':exs.length+'회'}</span>`:''}</button>`;
   }
   h+='</div>'+monthSum()+'<div class="ban"></div></div>';
   const dg=gev.filter(e=>evOn(e,sel)).sort((a,b)=>gtime(a).localeCompare(gtime(b)));
   const dt=S.tasks.filter(t=>taskOn(t,sel));
-  const dx=S.ex.filter(x=>x.date===sel);
+  const dx=S.ex.filter(x=>x.date===sel),di=S.items.filter(i=>i.date===sel);
   const d=parse(sel);
   h+=`<div class="card"><b>${d.getMonth()+1}월 ${d.getDate()}일 (${DAYS[d.getDay()]})</b> <span class="mut">공부 ${sessMin(sel)}분</span><div style="margin-top:8px">`;
   h+=dg.map(e=>{const i=evInfo(e),r=earn(S.cat[e.id],S.pay[e.id],i.sd,i.ed,i.st,i.en);
     return `<div class="item" style="background:${hlOf(e.id)}"><span class="t sp"><b>${gtime(e)}</b> ${esc(e.summary||'(제목 없음)')}${i.sd!==i.ed?` <span class="mut">(${i.sd.slice(5)}~${i.ed.slice(5)})</span>`:''} ${catTag(S.cat[e.id])}${payTag(r)} <span class="tag">${esc(e._calName.split('@')[0])}</span></span><button class="ghost" onclick="openEdit('g',${e._i})">✎</button><button class="ghost" onclick="gDel(${e._i})">✕</button></div>${ctl(e.id,S.hl[e.id],'setHl')}`}).join('');
   h+=dt.map(t=>{const r=earn(S.cat[t.id],S.pay[t.id],t.date,t.end||t.date,t.time,t.t2);
     return `<div class="item ${t.done?'done':''}" style="background:${t.color||COLORS[0]}"><input type="checkbox" ${t.done?'checked':''} onchange="toggle('${t.id}')"><span class="t sp">${t.time?`<b>${t.time}</b> `:''}${esc(t.text)}${t.end&&t.end!==t.date?` <span class="mut">(${t.date.slice(5)}~${t.end.slice(5)})</span>`:''} ${catTag(S.cat[t.id])}${payTag(r)} <span class="tag">앱</span></span><button class="ghost" onclick="openEdit('t','${t.id}')">✎</button><button class="ghost" onclick="delT('${t.id}')">✕</button></div>${ctl(t.id,t.color,'setTC')}`}).join('');
+  h+=di.map(itemRow).join('');
   h+=dx.map(x=>`<div class="item" style="background:#FFD6B8"><span class="t sp"><i class="exb"></i> <b>${esc(x.name)}</b> ${x.min?x.min+'분':''} ${esc(x.detail)}</span></div>`).join('');
-  if(!dg.length&&!dt.length&&!dx.length)h+='<div class="mut">이 날은 일정이 없어요.</div>';
+  if(!dg.length&&!dt.length&&!dx.length&&!di.length)h+='<div class="mut">이 날은 일정이 없어요.</div>';
   h+='</div></div>';
   h+=`<div class="card"><b>일정 추가</b><input type="text" placeholder="일정 제목" value="${esc(F.t)}" style="margin:8px 0" oninput="F.t=this.value" onkeydown="if(event.key==='Enter')gCreate()">
   <div class="row"><span class="mut">날짜</span><input type="date" value="${F.d1||sel}" oninput="F.d1=this.value"><span>~</span><input type="date" value="${F.d2}" oninput="F.d2=this.value"></div>
@@ -409,12 +411,12 @@ const EXN=['러닝','걷기','웨이트','요가','필라테스','수영','자�
 async function addEx(){
   const e=F.ex,name=e.name.trim();if(!name)return;
   const date=e.date||sel||TODAY,min=+e.min||0;
-  S.ex.push({id:uid(),date,name,min,detail:e.detail.trim(),note:e.note.trim()});save();
+  S.ex.push({id:uid(),date,name,min,detail:e.detail.trim(),note:e.note.trim()});save();if(S.drive)driveSync(true);
   const wk=S.wr||(cals.find(isW)||{}).k,push=e.push;
   F.ex={date:'',name:'',min:'',detail:'',note:'',push:push};render();
   if(push&&wk){try{await insEv(wk,'💪 '+name+(min?' ('+min+'분)':''),date,'','');syncG()}catch(x){gstat={s:'err',m:errMsg(x)};render()}}
 }
-function delEx(id){S.ex=S.ex.filter(x=>x.id!==id);save();render()}
+function delEx(id){S.ex=S.ex.filter(x=>x.id!==id);S.logDel=[...(S.logDel||[]),id];save();render();if(S.drive)driveSync(true)}
 function exView(){
   const e=F.ex,d=e.date||sel||TODAY,names=[...new Set([...EXN,...S.ex.map(x=>x.name)])];
   const wk=Array.from({length:7},(_,i)=>add(TODAY,i-6)),mo=TODAY.slice(0,7);
@@ -445,7 +447,7 @@ function openEdit(kind,ref){
   }
   drawEdit();
 }
-function closeEdit(){ED=null;$('#md').innerHTML=''}
+function closeEdit(){ED=null;SM=null;IM=null;NM=null;$('#md').innerHTML=''}
 function edColor(c){ED.color=c;drawEdit()}
 function drawEdit(){
   const E=ED;if(!E){$('#md').innerHTML='';return}
@@ -484,6 +486,152 @@ async function saveEdit(){
     S.cat[e.id]=E.cat;S.hl[e.id]=E.color;if(alba)S.pay[e.id]={type:E.pt,amt:+E.amt};else delete S.pay[e.id];
     save();sel=d1;cm=d1.slice(0,7);closeEdit();await syncG();
   }catch(x){E.busy=false;E.err=errMsg(x);drawEdit()}
+}
+/* 학교: 과목 · 시간표 · 시험/과제 */
+const ITYPES=['과제','시험','공부','팀플 회의','일정'],ITC={'과제':'#F7B9C8','시험':'#FBD45C','공부':'#D9CCF2','팀플 회의':'#FFD6B8','일정':'#BFDDF5'};
+const STS=['시작 전','진행 중','완료'],SCATS=['교양','전공필수','전공선택','기타'];
+const DN=[['월',1],['화',2],['수',3],['목',4],['금',5],['토',6],['일',0]];
+let SM=null,IM=null,NM=null;
+function persist(){save();if(S.drive)driveSync(true);render()}
+const terms=()=>[...new Set(S.subj.map(s=>s.term).filter(Boolean))].sort().reverse();
+const curTerm=()=>{const t=terms();return t.includes(F.term)?F.term:(t[0]||'')};
+const subjName=id=>{const x=S.subj.find(y=>y.id===id);return x?x.name:''};
+const dday=d=>Math.round((parse(d)-parse(TODAY))/864e5);
+const ddTxt=n=>n===0?'D-day':n>0?'D-'+n:'D+'+(-n);
+const hhmm=m=>pad(Math.floor(m/60))+':'+pad(m%60);
+function itemRow(i){
+  const n=dday(i.date),done=i.status==='완료',sn=subjName(i.subj);
+  return `<div class="item ${done?'done':''}" style="background:${ITC[i.type]||'#eee'}"><input type="checkbox" ${done?'checked':''} onchange="togItem('${i.id}')"><span class="t sp">${i.time?`<b>${esc(i.time)}</b> `:''}${esc(i.title)} <span class="tag">${i.type}</span>${sn?` <span class="tag">${esc(sn)}</span>`:''}${i.status==='진행 중'?' <span class="tag">진행 중</span>':''}<span class="mut" style="display:block;font-size:11px">${i.date.slice(5)}${i.memo?' · '+esc(i.memo):''}</span></span>${done?'':`<span class="tag" style="${n<0?'background:var(--bad);color:#fff':''}">${ddTxt(n)}</span>`}<button class="ghost" onclick="openItem('${i.id}')">✎</button></div>`;
+}
+function togItem(id){const i=S.items.find(x=>x.id===id);if(!i)return;i.status=i.status==='완료'?'시작 전':'완료';i.u=Date.now();persist()}
+function twHTML(){
+  const m=F.tw||'today',end=add(TODAY,6),T=terms()[0]||'';
+  const open=S.items.filter(i=>i.status!=='완료').sort((a,b)=>(a.date+(a.time||'')).localeCompare(b.date+(b.time||'')));
+  const over=open.filter(i=>i.date<TODAY),win=open.filter(i=>i.date>=TODAY&&i.date<=(m==='today'?TODAY:end));
+  const cls=m==='today'?S.subj.filter(x=>x.term===T&&(x.days||[]).includes(parse(TODAY).getDay())&&x.start).sort((a,b)=>a.start.localeCompare(b.start)):[];
+  const evs=gev.filter(e=>{const i=evInfo(e);return i.ed>=TODAY&&i.sd<=(m==='today'?TODAY:end)});
+  const rows=cls.map(x=>`<div class="item" style="background:${x.color||COLORS[4]}"><span class="t sp">🎓 <b>${x.start}~${x.end}</b> ${esc(x.name)}${x.room?` <span class="mut">${esc(x.room)}</span>`:''}</span></div>`).join('')
+   +over.map(itemRow).join('')+win.map(itemRow).join('')
+   +evs.map(e=>`<div class="item" style="background:${hlOf(e.id)}"><span class="t sp"><b>${gtime(e)}</b> ${esc(e.summary||'(제목 없음)')} <span class="mut" style="font-size:11px">${evInfo(e).sd.slice(5)}</span></span></div>`).join('');
+  return `<div class="card"><div class="row"><b>📌 ${m==='today'?'Today':'Weekly'}</b><span class="mut sp">${m==='today'?'오늘':'오늘부터 7일'}${over.length?` · <span class="bad">밀린 ${over.length}개</span>`:''}</span>${[['today','오늘'],['week','이번 주']].map(([k,n])=>`<button class="catchip ${m===k?'on':''}" style="background:var(--bd);padding:2px 10px" onclick="F.tw='${k}';render()">${n}</button>`).join('')}</div><div style="margin-top:8px">${rows||'<div class="mut">비어 있어요 🎉 학교 탭에서 시험·과제를 추가하면 여기에 나타나요.</div>'}</div></div>`;
+}
+/* 과목 */
+function openSubj(id){const x=id?S.subj.find(y=>y.id===id):null;SM=x?{...x,days:[...(x.days||[])]}:{id:'',name:'',credit:'',cat:'전공선택',days:[],start:'',end:'',room:'',term:curTerm()||'2026-2학기',color:COLORS[4]};drawSubj()}
+function togDay(v){const d=SM.days,i=d.indexOf(v);i<0?d.push(v):d.splice(i,1);drawSubj()}
+function subjColor(c){SM.color=c;drawSubj()}
+function drawSubj(){
+  const x=SM;if(!x){$('#md').innerHTML='';return}
+  $('#md').innerHTML=`<div class="md" onclick="if(event.target===this)closeEdit()"><div class="box"><b>${x.id?'과목 수정':'과목 추가'}</b>
+  <input type="text" placeholder="과목명" value="${esc(x.name)}" oninput="SM.name=this.value" style="margin:8px 0">
+  <div class="row" style="flex-wrap:nowrap"><input type="number" placeholder="학점" value="${esc(x.credit)}" oninput="SM.credit=this.value" style="width:80px"><input type="text" placeholder="학기 (예: 2026-2학기)" value="${esc(x.term)}" oninput="SM.term=this.value"></div>
+  <div class="row" style="margin-top:8px">${SCATS.map(c=>`<button class="catchip ${x.cat===c?'on':''}" style="background:var(--bd)" onclick="SM.cat='${c}';drawSubj()">${x.cat===c?'✓ ':''}${c}</button>`).join('')}</div>
+  <div class="mut" style="margin:8px 0 4px">요일</div><div class="row">${DN.map(([n,v])=>`<button class="catchip ${x.days.includes(v)?'on':''}" style="background:var(--bd)" onclick="togDay(${v})">${n}</button>`).join('')}</div>
+  <div class="row" style="margin-top:8px"><span class="mut">시간</span><input type="time" value="${x.start}" oninput="SM.start=this.value"><span>~</span><input type="time" value="${x.end}" oninput="SM.end=this.value"></div>
+  <input type="text" placeholder="강의실" value="${esc(x.room)}" oninput="SM.room=this.value" style="margin-top:8px">
+  <div class="mut" style="margin:8px 0 4px">색</div>${swHTML(x.color,'subjColor')}
+  ${x.err?`<div class="bad" style="margin-top:8px;font-size:13px">${esc(x.err)}</div>`:''}
+  <div class="row" style="margin-top:14px"><button class="pri" onclick="saveSubj()">저장</button><button onclick="closeEdit()">취소</button>${x.id?`<button class="ghost" onclick="delSubj('${x.id}')">삭제</button>`:''}</div></div></div>`;
+}
+function saveSubj(){
+  const x=SM;if(!x.name.trim()){x.err='과목명을 입력해 주세요.';drawSubj();return}
+  if(x.start&&x.end&&x.end<=x.start){x.err='종료 시간이 시작보다 늦어야 해요.';drawSubj();return}
+  const o={id:x.id||uid(),name:x.name.trim(),credit:+x.credit||0,cat:x.cat,days:x.days,start:x.start,end:x.end,room:x.room.trim(),term:x.term.trim(),color:x.color,u:Date.now()};
+  const i=S.subj.findIndex(y=>y.id===o.id);i<0?S.subj.push(o):S.subj[i]=o;
+  F.term=o.term;closeEdit();persist();
+}
+function delSubj(id){if(!confirm('이 과목을 삭제할까요?'))return;S.subj=S.subj.filter(x=>x.id!==id);S.logDel=[...(S.logDel||[]),id];closeEdit();persist()}
+/* 시험 · 과제 */
+function openItem(id){const x=id?S.items.find(y=>y.id===id):null;IM=x?{...x}:{id:'',type:'과제',title:'',date:TODAY,time:'',subj:'',status:'시작 전',memo:''};drawItem()}
+function drawItem(){
+  const x=IM;if(!x){$('#md').innerHTML='';return}
+  const L=S.subj.filter(y=>y.term===curTerm());
+  $('#md').innerHTML=`<div class="md" onclick="if(event.target===this)closeEdit()"><div class="box"><b>${x.id?'수정':'시험·과제 추가'}</b>
+  <div class="row" style="margin-top:8px">${ITYPES.map(c=>`<button class="catchip ${x.type===c?'on':''}" style="background:${ITC[c]}" onclick="IM.type='${c}';drawItem()">${x.type===c?'✓ ':''}${c}</button>`).join('')}</div>
+  <input type="text" placeholder="제목 (예: 리포트 제출)" value="${esc(x.title)}" oninput="IM.title=this.value" style="margin:8px 0">
+  <div class="row"><span class="mut">날짜</span><input type="date" value="${x.date}" oninput="IM.date=this.value"><input type="time" value="${x.time}" oninput="IM.time=this.value"></div>
+  <select onchange="IM.subj=this.value" style="margin-top:8px;width:100%"><option value="">과목 없음</option>${L.map(y=>`<option value="${y.id}" ${x.subj===y.id?'selected':''}>${esc(y.name)}</option>`).join('')}</select>
+  <div class="row" style="margin-top:8px">${STS.map(c=>`<button class="catchip ${x.status===c?'on':''}" style="background:var(--bd)" onclick="IM.status='${c}';drawItem()">${x.status===c?'✓ ':''}${c}</button>`).join('')}</div>
+  <input type="text" placeholder="메모 (범위, 준비물 등)" value="${esc(x.memo)}" oninput="IM.memo=this.value" style="margin-top:8px">
+  ${x.err?`<div class="bad" style="margin-top:8px;font-size:13px">${esc(x.err)}</div>`:''}
+  <div class="row" style="margin-top:14px"><button class="pri" onclick="saveItem()">저장</button><button onclick="closeEdit()">취소</button>${x.id?`<button class="ghost" onclick="delItem('${x.id}')">삭제</button>`:''}</div></div></div>`;
+}
+function saveItem(){
+  const x=IM;if(!x.title.trim()||!x.date){x.err='제목과 날짜를 입력해 주세요.';drawItem();return}
+  const o={id:x.id||uid(),type:x.type,title:x.title.trim(),date:x.date,time:x.time,subj:x.subj,status:x.status,memo:x.memo.trim(),u:Date.now()};
+  const i=S.items.findIndex(y=>y.id===o.id);i<0?S.items.push(o):S.items[i]=o;
+  closeEdit();persist();
+}
+function delItem(id){S.items=S.items.filter(x=>x.id!==id);S.logDel=[...(S.logDel||[]),id];closeEdit();persist()}
+function itemsHTML(){
+  const open=S.items.filter(i=>i.status!=='완료').sort((a,b)=>(a.date+(a.time||'')).localeCompare(b.date+(b.time||'')));
+  const done=S.items.filter(i=>i.status==='완료').sort((a,b)=>b.date.localeCompare(a.date)).slice(0,15);
+  return `<div class="row" style="margin-bottom:8px"><span class="sp mut">${open.length}개 남았어요</span><button class="pri" onclick="openItem()">＋ 추가</button></div><div class="card">${open.map(itemRow).join('')||'<div class="mut">남은 항목이 없어요 🎉</div>'}</div>${done.length?`<div class="card"><b>완료</b><div style="margin-top:8px">${done.map(itemRow).join('')}</div></div>`:''}`;
+}
+/* 시간표 */
+function ttHTML(L){
+  const used=d=>L.some(x=>(x.days||[]).includes(d)),ds=[1,2,3,4,5,...(used(6)?[6]:[]),...(used(0)?[0]:[])];
+  const ms=L.filter(x=>x.start&&x.end).flatMap(x=>[mm(x.start),mm(x.end)]);
+  const t0=Math.floor(Math.min(540,...ms)/60),t1=Math.ceil(Math.max(1080,...ms)/60),K=0.8,H=(t1-t0)*60*K;
+  const name={1:'월',2:'화',3:'수',4:'목',5:'금',6:'토',0:'일'};
+  let h=`<div class="card" style="padding:8px"><div style="display:grid;grid-template-columns:30px repeat(${ds.length},1fr)"><div></div>${ds.map(d=>`<b style="text-align:center;font-size:12px;padding:4px 0">${name[d]}</b>`).join('')}`;
+  h+=`<div style="position:relative;height:${H}px">${Array.from({length:t1-t0},(_,i)=>`<span class="mut" style="position:absolute;top:${i*60*K}px;font-size:10px">${t0+i}</span>`).join('')}</div>`;
+  ds.forEach(d=>{h+=`<div style="position:relative;height:${H}px;border-left:1px solid var(--bd);background-image:linear-gradient(var(--bd) 1px,transparent 1px);background-size:100% ${60*K}px">`+L.filter(x=>(x.days||[]).includes(d)&&x.start&&x.end).map(x=>`<div class="ttblk" style="top:${(mm(x.start)-t0*60)*K}px;height:${(mm(x.end)-mm(x.start))*K-2}px;background:${x.color||COLORS[4]}" onclick="openSubj('${x.id}')"><b>${esc(x.name)}</b><br>${esc(x.room||'')}</div>`).join('')+'</div>'});
+  return h+'</div></div>';
+}
+function schView(){
+  const sub=F.sch||'tt';
+  let h=`<div class="row" style="margin-bottom:10px">${[['tt','시간표'],['sb','과목'],['it','시험·과제'],['nt','강의 노트']].map(([k,n])=>`<button class="catchip ${sub===k?'on':''}" style="background:var(--card)" onclick="F.sch='${k}';render()">${n}</button>`).join('')}</div>`;
+  if(sub==='it')return h+itemsHTML();
+  if(sub==='nt')return h+notesHTML();
+  const ts=terms(),T=curTerm(),L=S.subj.filter(x=>x.term===T);
+  h+=`<div class="row" style="margin-bottom:8px">${ts.length?`<select onchange="F.term=this.value;render()">${ts.map(t=>`<option ${t===T?'selected':''}>${esc(t)}</option>`).join('')}</select>`:''}<span class="sp mut">${L.length?`${L.length}과목 · ${L.reduce((a,x)=>a+x.credit,0)}학점`:''}</span><button class="pri" onclick="openSubj()">＋ 과목 추가</button></div>`;
+  if(!L.length)return h+'<div class="card mut">아직 과목이 없어요. “＋ 과목 추가”로 이번 학기 수업을 넣어 보세요. 요일과 시간을 넣으면 시간표가 자동으로 그려져요.</div>';
+  if(sub==='tt')return h+ttHTML(L);
+  return h+SCATS.map(c=>{const l=L.filter(x=>x.cat===c);return l.length?`<div class="card"><b>${c}</b>${l.map(x=>`<div class="item" style="background:${x.color||COLORS[4]};margin-top:8px"><span class="t sp"><b>${esc(x.name)}</b> <span class="tag">${x.credit}학점</span><span class="mut" style="display:block;font-size:11px">${(x.days||[]).map(d=>DN.find(y=>y[1]===d)[0]).join('·')} ${x.start?x.start+'~'+x.end:''} ${esc(x.room||'')}</span></span><button class="ghost" onclick="openSubj('${x.id}')">✎</button></div>`).join('')}</div>`:''}).join('');
+}
+/* 강의 노트: 과목 · 주차 · 복습 체크 · 진행률 */
+const safeUrl=u=>/^https?:\/\//i.test(u||'')?u:'';
+function togRev(id){const n=S.notes.find(x=>x.id===id);if(!n)return;n.review=!n.review;n.u=Date.now();persist()}
+function openNote(id){
+  const x=id?S.notes.find(y=>y.id===id):null,sf=F.nsub||'';
+  const last=Math.max(0,...S.notes.filter(n=>n.subj===sf).map(n=>n.week||0));
+  NM=x?{...x}:{id:'',subj:sf,week:last||1,date:TODAY,title:'',link:'',memo:'',review:false};drawNote();
+}
+function drawNote(){
+  const x=NM;if(!x){$('#md').innerHTML='';return}
+  const L=S.subj.filter(y=>y.term===curTerm());
+  $('#md').innerHTML=`<div class="md" onclick="if(event.target===this)closeEdit()"><div class="box"><b>${x.id?'노트 수정':'강의 노트 추가'}</b>
+  <select onchange="NM.subj=this.value" style="margin:8px 0;width:100%"><option value="">과목 선택</option>${L.map(y=>`<option value="${y.id}" ${x.subj===y.id?'selected':''}>${esc(y.name)}</option>`).join('')}</select>
+  <div class="row" style="flex-wrap:nowrap"><input type="number" placeholder="주차" value="${esc(x.week)}" oninput="NM.week=this.value" style="width:80px"><input type="date" value="${x.date}" oninput="NM.date=this.value"></div>
+  <input type="text" placeholder="제목 (예: 마케팅의 이해)" value="${esc(x.title)}" oninput="NM.title=this.value" style="margin-top:8px">
+  <input type="text" placeholder="노트 링크 (드라이브 PDF 공유 링크 등, 선택)" value="${esc(x.link)}" oninput="NM.link=this.value" style="margin-top:8px">
+  <input type="text" placeholder="메모 (선택)" value="${esc(x.memo)}" oninput="NM.memo=this.value" style="margin-top:8px">
+  <label class="row" style="margin-top:8px"><input type="checkbox" ${x.review?'checked':''} onchange="NM.review=this.checked"> 복습 완료</label>
+  ${x.err?`<div class="bad" style="margin-top:8px;font-size:13px">${esc(x.err)}</div>`:''}
+  <div class="row" style="margin-top:14px"><button class="pri" onclick="saveNote()">저장</button><button onclick="closeEdit()">취소</button>${x.id?`<button class="ghost" onclick="delNote('${x.id}')">삭제</button>`:''}</div></div></div>`;
+}
+function saveNote(){
+  const x=NM;if(!x.subj){x.err='과목을 선택해 주세요.';drawNote();return}
+  if(!x.title.trim()){x.err='제목을 입력해 주세요.';drawNote();return}
+  if(x.link.trim()&&!safeUrl(x.link.trim())){x.err='링크는 http:// 또는 https://로 시작해야 해요.';drawNote();return}
+  const o={id:x.id||uid(),subj:x.subj,week:+x.week||1,date:x.date||TODAY,title:x.title.trim(),link:x.link.trim(),memo:x.memo.trim(),review:!!x.review,u:Date.now()};
+  const i=S.notes.findIndex(y=>y.id===o.id);i<0?S.notes.push(o):S.notes[i]=o;
+  F.nsub=o.subj;closeEdit();persist();
+}
+function delNote(id){if(!confirm('이 노트를 삭제할까요?'))return;S.notes=S.notes.filter(x=>x.id!==id);S.logDel=[...(S.logDel||[]),id];closeEdit();persist()}
+const barH=pct=>`<div style="height:8px;background:var(--bd);border-radius:9px;overflow:hidden;margin:3px 0 6px"><i style="display:block;height:100%;width:${pct}%;background:var(--ok)"></i></div>`;
+function notesHTML(){
+  const T=curTerm(),L=S.subj.filter(x=>x.term===T),sf=F.nsub||'';
+  let h=`<div class="row" style="margin-bottom:8px"><select onchange="F.nsub=this.value;render()"><option value="">전체 과목</option>${L.map(y=>`<option value="${y.id}" ${sf===y.id?'selected':''}>${esc(y.name)}</option>`).join('')}</select><span class="sp"></span><button class="pri" onclick="openNote()">＋ 노트 추가</button></div>`;
+  if(!L.length)return h+'<div class="card mut">먼저 “과목” 탭에서 이번 학기 과목을 추가해 주세요.</div>';
+  h+=`<div class="card"><b>과목별 진행률</b>${L.map(x=>{
+    const st=S.items.filter(i=>i.subj===x.id&&i.type==='공부'),sd=st.filter(i=>i.status==='완료').length;
+    const nn=S.notes.filter(n=>n.subj===x.id),nr=nn.filter(n=>n.review).length;
+    return `<div style="margin-top:8px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${x.color||COLORS[4]}"></span> <b>${esc(x.name)}</b> <span class="mut" style="font-size:12px">복습 ${nr}/${nn.length} · 공부 ${sd}/${st.length}</span>${barH(nn.length?Math.round(nr/nn.length*100):0)}</div>`}).join('')}</div>`;
+  const nts=S.notes.filter(n=>!sf||n.subj===sf),weeks=[...new Set(nts.map(n=>n.week))].sort((a,b)=>b-a);
+  h+=weeks.length?weeks.map(w=>`<div class="card"><b>${w}주차</b>${nts.filter(n=>n.week===w).sort((a,b)=>b.date.localeCompare(a.date)).map(n=>{const sj=S.subj.find(y=>y.id===n.subj),u=safeUrl(n.link);
+    return `<div class="item ${n.review?'done':''}" style="background:${(sj&&sj.color)||COLORS[4]};margin-top:8px"><input type="checkbox" ${n.review?'checked':''} onchange="togRev('${n.id}')" title="복습 완료"><span class="t sp"><b>${esc(n.title)}</b> <span class="tag">${esc(sj?sj.name:'과목 없음')}</span>${u?` <a href="${esc(u)}" target="_blank" rel="noopener" style="color:inherit;font-size:12px">열기 ↗</a>`:''}<span class="mut" style="display:block;font-size:11px">${n.date.slice(5)}${n.memo?' · '+esc(n.memo):''}</span></span><button class="ghost" onclick="openNote('${n.id}')">✎</button></div>`}).join('')}</div>`).join(''):'<div class="card mut">아직 노트가 없어요. “＋ 노트 추가”로 과목과 주차를 정하고, 복습하면 체크하세요.</div>';
+  return h;
 }
 function togCal(id){S.off[id]=!S.off[id];save();syncG()}
 function mv(n){const[y,m]=cm.split('-').map(Number);const d=new Date(y,m-1+n,1);cm=d.getFullYear()+'-'+pad(d.getMonth()+1);sel=cm+'-01';syncG()}
@@ -529,13 +677,14 @@ async function doSync(push){
     let rem={logs:[],del:[]},created=false;
     if(D.jsonId){const r=await dfetch(a,'https://www.googleapis.com/drive/v3/files/'+D.jsonId+'?alt=media',{raw:true});try{rem=JSON.parse(await r.text())}catch(e){}}
     else created=true;
-    const rl=rem.logs||[],rd=rem.del||[];
-    const del=[...new Set([...(S.logDel||[]),...rd])];
-    const map={};[...rl,...S.logs].forEach(l=>{if(!del.includes(l.id))map[l.id]=l});
-    const logs=Object.values(map);
-    const same=!created&&logs.length===rl.length&&del.length===rd.length&&logs.every(l=>rl.some(x=>x.id===l.id));
-    S.logs=logs;S.logDel=del;save();
-    const content=JSON.stringify({logs,del});
+    const COLS=['logs','subj','items','notes','ex','sess'];
+    const del=[...new Set([...(S.logDel||[]),...(rem.del||[])])];
+    const merged={del};
+    COLS.forEach(c=>{const m={};[...(rem[c]||[]),...(S[c]||[])].forEach(x=>{if(del.includes(x.id))return;if(!m[x.id]||(x.u||0)>=(m[x.id].u||0))m[x.id]=x});merged[c]=Object.values(m)});
+    const norm=o=>JSON.stringify([...COLS.map(c=>[...(o[c]||[])].sort((a,b)=>a.id<b.id?-1:1)),[...(o.del||[])].sort()]);
+    const same=!created&&norm(rem)===norm(merged);
+    COLS.forEach(c=>{S[c]=merged[c]});S.logDel=del;save();
+    const content=JSON.stringify(merged);
     if(created)D.jsonId=await dcreate(a,{name:DJ},'application/json',content);
     else if(push||!same)await dupdate(a,D.jsonId,'application/json',content);
     try{
@@ -554,7 +703,7 @@ function driveOff(){S.drive=null;dstat={s:'',m:''};save();render()}
 function driveCard(){
   const h='<div class="card"><b>☁ 구글 드라이브에 저장</b>';
   if(!S.accts.length)return h+'<div class="mut" style="margin-top:6px">구글 계정을 먼저 연결해 주세요. 왼쪽 아래의 “＋ 계정 추가”를 누르세요.</div></div>';
-  if(!S.drive)return h+`<div class="mut" style="margin:6px 0">알림장을 드라이브에 자동 저장해서 어느 기기에서든 볼 수 있어요.</div><div class="row" style="flex-wrap:nowrap"><select id="dacct" style="flex:1;min-width:0">${S.accts.map(a=>`<option>${esc(a)}</option>`).join('')}</select><button class="pri" onclick="driveOn()">연결</button></div>${driveErr()}</div>`;
+  if(!S.drive)return h+`<div class="mut" style="margin:6px 0">알림장, 과목, 시험·과제, 강의 노트, 운동·공부 기록을 드라이브에 자동 저장해서 어느 기기에서든 볼 수 있어요.</div><div class="row" style="flex-wrap:nowrap"><select id="dacct" style="flex:1;min-width:0">${S.accts.map(a=>`<option>${esc(a)}</option>`).join('')}</select><button class="pri" onclick="driveOn()">연결</button></div>${driveErr()}</div>`;
   const D=S.drive;
   return h+`<div class="mut" style="margin:6px 0">${esc(D.acct)} · ${dstat.s==='load'?'동기화 중…':dstat.s==='ok'?'동기화됨 '+dstat.t.getHours()+':'+pad(dstat.t.getMinutes()):'대기 중'}</div>
   <div class="row"><button onclick="driveSync(true)">지금 동기화</button>${D.docId?`<button onclick="window.open('https://docs.google.com/document/d/${D.docId}/edit','_blank')">문서로 보기</button>`:''}<button class="ghost" onclick="driveOff()">연결 해제</button></div>${dstat.docErr?'<div class="mut" style="font-size:12px;margin-top:4px">읽기용 문서 갱신은 실패했어요. 알림장 데이터는 저장됐어요.</div>':''}${driveErr()}</div>`;
@@ -591,11 +740,11 @@ function exp(){const a=document.createElement('a');a.href=URL.createObjectURL(ne
 function imp(el){const f=el.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{Object.assign(S,JSON.parse(r.result));save();render()}catch(e){alert('파일을 읽을 수 없어요')}};r.readAsText(f)}
 
 function render(){
-  const T={cal:['📅 일정','일정'],log:['📒 알림장','알림장'],time:['⏱ 스터디 타임체크','타임체크'],ex:['💪 운동 기록','운동 기록']};
+  const T={cal:['📅 일정','일정'],log:['📒 알림장','알림장'],time:['⏱ 스터디 타임체크','타임체크'],ex:['💪 운동 기록','운동 기록'],sch:['🎓 학교','학교']};
   $('#ttl').textContent=T[tab][0];
   $('#side').innerHTML='<h2><i class="logo"></i> 내 플래너</h2>'+Object.keys(T).map(k=>`<button class="${tab===k?'on':''}" onclick="tab='${k}';render()">${T[k][1]}</button>`).join('')+'<div class="face"></div>'+acctHTML();
   $('#macct').innerHTML=acctHTML();
-  $('#app').innerHTML={cal:calView,log:logView,time:timeView,ex:exView}[tab]();
+  $('#app').innerHTML={cal:calView,log:logView,time:timeView,ex:exView,sch:schView}[tab]();
   clearInterval(tick);
   if(S.timer&&tab==='time')tick=setInterval(()=>{const c=$('#clock');if(c)c.textContent=hms(elapsed());const t=$('#tot');if(t)t.textContent=hms(S.sess.filter(s=>s.date===TODAY).reduce((a,s)=>a+s.sec,0)+elapsed())},1000);
 }
