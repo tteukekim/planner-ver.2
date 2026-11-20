@@ -170,33 +170,77 @@ async function api(acct,path,opt={}){
   if(!r.ok)throw{message:(await r.text()).slice(0,160)};
   return r.status===204?null:r.json();
 }
+const CK='planner-cache';let lastSync=0;
+const loadCache=()=>{try{return JSON.parse(localStorage.getItem(CK)||'{}')}catch(e){return{}}};
+const putCache=C=>{try{localStorage.setItem(CK,JSON.stringify(C))}catch(e){}};
+const fmtT=t=>{const d=new Date(t);return (d.getMonth()+1)+'/'+d.getDate()+' '+pad(d.getHours())+':'+pad(d.getMinutes())};
+function tidyTasks(out){
+  const op=out.filter(t=>t.status!=='completed'),cp=out.filter(t=>t.status==='completed').sort((a,b)=>(b.updated||'').localeCompare(a.updated||'')).slice(0,15);
+  return [...op,...cp];
+}
+function restoreCache(withTasks){
+  const C=loadCache(),nc=[],ne=[];
+  S.accts.forEach(ac=>{
+    (C.cals&&C.cals[ac]||[]).forEach(c=>{if(!nc.some(x=>x.id===c.id))nc.push(c)});
+    (C.ev&&C.ev[cm+'|'+ac]||[]).forEach(e=>{if(!S.off[e._acct+'|'+e._cal])ne.push(e)});
+  });
+  cals=nc;gev=ne;gev.forEach((e,i)=>e._i=i);
+  lastSync=C.t||0;
+  if(withTasks)gtasks=tidyTasks(S.accts.flatMap(ac=>(C.tasks&&C.tasks[ac])||[]));
+}
 async function syncG(){
   if(!tc)return;
   gstat={s:'load',m:''};render();
   const[y,m]=cm.split('-').map(Number);
   const a=new Date(y,m-1,1).toISOString(),b=new Date(y,m,1).toISOString();
-  const nc=[],ne=[];let bad=null;
+  const C=loadCache();C.ev=C.ev||{};C.cals=C.cals||{};
+  const nc=[],ne=[],fresh=new Set();let bad=null;
   for(const ac of S.accts){
+    let ccs=[],evs=[];
     try{
       const l=await api(ac,'/users/me/calendarList?maxResults=100');
       for(const c of l.items){
         if(nc.some(x=>x.id===c.id))continue;
-        const cc={id:c.id,summary:c.summaryOverride||c.summary,acct:ac,k:ac+'|'+c.id,role:c.accessRole};nc.push(cc);
+        const cc={id:c.id,summary:c.summaryOverride||c.summary,acct:ac,k:ac+'|'+c.id,role:c.accessRole};ccs.push(cc);
         if(S.off[cc.k])continue;
         const p=await api(ac,'/calendars/'+encodeURIComponent(c.id)+'/events?singleEvents=true&orderBy=startTime&maxResults=250&timeMin='+encodeURIComponent(a)+'&timeMax='+encodeURIComponent(b));
-        (p.items||[]).forEach(e=>ne.push({...e,_cal:c.id,_acct:ac,_calName:cc.summary}));
+        (p.items||[]).forEach(e=>evs.push({...e,_cal:c.id,_acct:ac,_calName:cc.summary}));
       }
-    }catch(e){if(!e||e.code!=='expired')bad=e}
+      C.cals[ac]=ccs;C.ev[cm+'|'+ac]=evs;fresh.add(ac);
+    }catch(e){
+      if(!e||e.code!=='expired')bad=e;
+      ccs=(C.cals[ac]||[]).filter(c=>!nc.some(x=>x.id===c.id));
+      evs=(C.ev[cm+'|'+ac]||[]).filter(e2=>!S.off[e2._acct+'|'+e2._cal]);
+    }
+    ccs.forEach(c=>{if(!nc.some(x=>x.id===c.id))nc.push(c)});
+    evs.forEach(e=>{if(nc.some(c=>c.id===e._cal&&c.acct===e._acct))ne.push(e)});
   }
+  if(fresh.size){C.t=Date.now()}
+  putCache(C);lastSync=C.t||lastSync;
   cals=nc;gev=ne;gev.forEach((e,i)=>e._i=i);
   const mig=[];
   gev.forEach(e=>{const p=(e.extendedProperties&&e.extendedProperties.private)||{};
     if(p.cat)S.cat[e.id]=p.cat;if(p.payAmt)S.pay[e.id]={type:p.payType||'시급',amt:+p.payAmt};if(p.hl)S.hl[e.id]=p.hl;
-    if(!p.cat&&!p.hl&&(S.cat[e.id]||S.hl[e.id]))mig.push(e.id)});
+    if(fresh.has(e._acct)&&!p.cat&&!p.hl&&(S.cat[e.id]||S.hl[e.id]))mig.push(e.id)});
   save();mig.forEach(id=>saveMeta(id));
   gstat=bad?{s:'err',m:errMsg(bad)}:{s:'ok',m:'',t:new Date()};
   render();syncT();if(S.drive)driveSync();
 }
+function staleBanner(){
+  const exp=S.accts.filter(a=>!(tok[a]&&tok[a].exp>Date.now()));
+  if(!exp.length)return '';
+  return `<div class="card" style="padding:8px 12px;font-size:13px"><span class="mut">${lastSync?'마지막 동기화 '+fmtT(lastSync)+'의 저장된 데이터예요.':'아직 동기화한 데이터가 없어요.'}</span> <button class="pri" style="padding:2px 10px;margin-left:6px" onclick="connect('${esc(exp[0])}')">다시 연결${exp.length>1?' ('+exp.length+')':''}</button></div>`;
+}
+let lastTry={};
+document.addEventListener('click',e=>{
+  if(!tc)return;
+  const bt=e.target.closest&&e.target.closest('button');
+  if(bt&&/connect\(/.test(bt.getAttribute('onclick')||''))return;
+  const ac=S.accts.find(x=>!(tok[x]&&tok[x].exp>Date.now())&&(!lastTry[x]||Date.now()-lastTry[x]>300000));
+  if(!ac)return;
+  lastTry[ac]=Date.now();
+  try{tc.requestAccessToken({login_hint:ac,prompt:''})}catch(x){}
+},true);
 function addMin(t,m){const[h,mi]=t.split(':').map(Number);const x=h*60+mi+m;return pad(Math.floor(x/60)%24)+':'+pad(x%60)}
 async function insEv(k,title,date,st,en,endDate,meta){
   const c=cals.find(x=>x.k===k);if(!c)throw{message:'쓸 수 있는 캘린더가 없어요'};
@@ -313,14 +357,15 @@ async function tapi(acct,path,opt={}){
 const errT=e=>e.code==='expired'?'로그인이 만료됐어요. 사이드바에서 “다시 연결”을 눌러 주세요.':e.code==='scope'?'Google Tasks 권한이 없어요. 콘솔에서 Tasks API를 켠 뒤 “권한 받기”를 눌러 주세요.':(e.message||'오류');
 async function syncT(){
   if(!tc)return;
-  const out=[],st={};
+  const C=loadCache();C.tasks=C.tasks||{};const out=[],st={};
   for(const ac of S.accts){
-    if(!tok[ac]||tok[ac].exp<Date.now())continue;
-    try{const p=await tapi(ac,'/lists/@default/tasks?showCompleted=true&showHidden=false&maxResults=100');(p.items||[]).forEach(t=>out.push({...t,_acct:ac}))}
-    catch(e){st[ac]=errT(e)}
+    if(tok[ac]&&tok[ac].exp>=Date.now()){
+      try{const p=await tapi(ac,'/lists/@default/tasks?showCompleted=true&showHidden=false&maxResults=100');const arr=(p.items||[]).map(t=>({...t,_acct:ac}));C.tasks[ac]=arr;out.push(...arr)}
+      catch(e){st[ac]=errT(e);out.push(...(C.tasks[ac]||[]))}
+    }else out.push(...(C.tasks[ac]||[]));
   }
-  const op=out.filter(t=>t.status!=='completed'),cp=out.filter(t=>t.status==='completed').sort((a,b)=>(b.updated||'').localeCompare(a.updated||'')).slice(0,15);
-  gtasks=[...op,...cp];tstat=st;render();
+  const C2=loadCache();C2.tasks=C.tasks;putCache(C2);
+  gtasks=tidyTasks(out);tstat=st;render();
 }
 const todoDest=()=>(F.todoDest&&S.accts.includes(F.todoDest))?F.todoDest:(S.accts[0]||'');
 async function addTodo(){
@@ -386,7 +431,7 @@ function monthSum(){
 function calView(){
   const[y,m]=cm.split('-').map(Number),first=new Date(y,m-1,1).getDay(),n=new Date(y,m,0).getDate();
   const wcals=cals.filter(isW);
-  let h=todayHTML()+weeklyHTML();
+  let h=staleBanner()+todayHTML()+weeklyHTML();
   h+=(gstat.s==='err'||gstat.s==='none')?`<div class="bad" style="margin-bottom:8px;font-size:13px">${esc(gstat.m)}</div>`:'';
   h+=`<div class="card"><b>Monthly</b><div class="mhead"><button class="ghost" onclick="mv(-1)">◀</button><b class="mt">${y}년 ${m}월</b><button class="ghost" onclick="mv(1)">▶</button><button class="ghost rf" onclick="syncG()" title="새로고침">↻</button></div>`;
   h+=`<div class="wkrow"><i class="d d1"></i><i class="d d2"></i><i class="d d3"></i><i class="d d4"></i><div class="cal wk">${DAYS.map((d,i)=>`<b class="${i==0?'su':i==6?'sa':''}" style="text-align:center">${d}</b>`).join('')}</div></div><div class="cal">`;
@@ -681,7 +726,7 @@ function examHTML(){
   return `<div class="card"><div class="row"><b>다가오는 시험</b><span class="sp"></span><button class="ghost" onclick="openItem('','시험')">＋</button></div>${ex.map(i=>{const sn=subjName(i.subj);return `<div class="exm" style="border-left:6px solid ${ITC['시험']}" onclick="openItem('${i.id}')"><b>${esc(i.title)}</b> <span class="tag" style="background:var(--bd)">${ddTxt(dday(i.date))}</span><div class="mut" style="font-size:12px">${i.date}${i.time?' '+esc(i.time):''}${sn?' · '+esc(sn):''}${i.memo?' · '+esc(i.memo):''}</div></div>`}).join('')||'<div class="mut" style="margin-top:6px">예정된 시험이 없어요. ＋로 추가해 보세요.</div>'}</div>`;
 }
 function togCal(id){S.off[id]=!S.off[id];save();syncG()}
-function mv(n){const[y,m]=cm.split('-').map(Number);const d=new Date(y,m-1+n,1);cm=d.getFullYear()+'-'+pad(d.getMonth()+1);sel=cm+'-01';syncG()}
+function mv(n){const[y,m]=cm.split('-').map(Number);const d=new Date(y,m-1+n,1);cm=d.getFullYear()+'-'+pad(d.getMonth()+1);sel=cm+'-01';restoreCache();render();syncG()}
 
 function logList(){
   const q=(F.q||'').trim().toLowerCase();
@@ -806,7 +851,7 @@ const SEED=[
  {id:'seed-nano',name:'나노바이오체외진단학',color:'#EBD59A',slots:[{days:[1],start:'14:00',end:'15:50',room:'지천관 B149'}]}
 ].map(x=>({credit:0,cat:'기타',term:'2026-2학기',u:1,...x}));
 function seedSubj(){let ch=false;SEED.forEach(x=>{if(!S.subj.some(y=>y.id===x.id)&&!(S.logDel||[]).includes(x.id)){S.subj.push({...x,slots:x.slots.map(l=>({...l,days:[...l.days]}))});ch=true}});if(ch)save()}
-seedSubj();render();initG();
+seedSubj();restoreCache(true);render();initG();
 if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
 </script>
 </body>
